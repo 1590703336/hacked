@@ -1,0 +1,18 @@
+diff --git a/node_modules/pdf-to-png-converter/out/propsToPdfDocInitParams.js b/node_modules/pdf-to-png-converter/out/propsToPdfDocInitParams.js
+index 5ce43ef..efc151c 100644
+--- a/node_modules/pdf-to-png-converter/out/propsToPdfDocInitParams.js
++++ b/node_modules/pdf-to-png-converter/out/propsToPdfDocInitParams.js
+@@ -29,5 +29,13 @@ function propsToPdfDocInitParams(props) {
+     pdfDocInitParams.password = props?.pdfFilePassword !== undefined
+         ? props.pdfFilePassword
+         : const_1.PDF_TO_PNG_OPTIONS_DEFAULTS.pdfFilePassword;
++
++    // --- PATCH ---
++    // Allow pass-through of cMap and standardFontData properties
++    if (props?.cMapUrl) pdfDocInitParams.cMapUrl = props.cMapUrl;
++    if (props?.cMapPacked !== undefined) pdfDocInitParams.cMapPacked = props.cMapPacked;
++    if (props?.standardFontDataUrl) pdfDocInitParams.standardFontDataUrl = props.standardFontDataUrl;
++    // -------------
++
+     return pdfDocInitParams;
+ }

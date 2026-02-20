@@ -6,12 +6,14 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [resultText, setResultText] = useState("");
+  const [processedImages, setProcessedImages] = useState([]);
 
   const handleUpload = async () => {
     if (!file) return;
     setLoading(true);
     setError(null);
     setResultText("");
+    setProcessedImages([]);
 
     try {
       // 1. Capture API
@@ -32,6 +34,8 @@ export default function App() {
       if (!images || images.length === 0) {
         throw new Error("No images returned from Capture API");
       }
+
+      setProcessedImages(images);
 
       // 2. OCR API for each image
       let combinedText = "";
@@ -76,18 +80,27 @@ export default function App() {
         <input
           type="file"
           onChange={(e) => setFile(e.target.files[0])}
+          style={{ color: "var(--text, black)" }}
         />
         <button
           onClick={handleUpload}
           disabled={!file || loading}
-          style={{ padding: "0.5rem 1rem", cursor: (!file || loading) ? "not-allowed" : "pointer" }}
+          style={{
+            padding: "0.5rem 1rem",
+            cursor: (!file || loading) ? "not-allowed" : "pointer",
+            backgroundColor: "#3ecfcf",
+            color: "#080b0f",
+            border: "none",
+            borderRadius: "8px",
+            fontWeight: "bold"
+          }}
         >
           {loading ? "Processing..." : "Upload & Process"}
         </button>
       </div>
 
       {error && (
-        <div style={{ color: "red", backgroundColor: "#ffe6e6", padding: "1rem", borderRadius: "4px", marginBottom: "1rem" }}>
+        <div style={{ color: "#d32f2f", backgroundColor: "#ffebee", padding: "1rem", borderRadius: "8px", marginBottom: "1rem" }}>
           <strong>Error: </strong> {error}
         </div>
       )}
@@ -95,9 +108,35 @@ export default function App() {
       {resultText && (
         <div>
           <h2>Result</h2>
-          <pre style={{ whiteSpace: "pre-wrap", background: "#f4f4f4", padding: "1rem", borderRadius: "4px", border: "1px solid #ddd" }}>
+          <pre style={{
+            whiteSpace: "pre-wrap",
+            backgroundColor: "#1e2836",
+            color: "#e8f0f8",
+            padding: "1.5rem",
+            borderRadius: "8px",
+            border: "1px solid #263545",
+            marginTop: "1rem"
+          }}>
             {resultText}
           </pre>
+        </div>
+      )}
+
+      {processedImages.length > 0 && (
+        <div style={{ marginTop: "2rem" }}>
+          <h2>Processed Images ({processedImages.length})</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: "1rem", marginTop: "1rem" }}>
+            {processedImages.map((base64Image, idx) => (
+              <div key={idx} style={{ border: "1px solid #263545", borderRadius: "8px", padding: "0.5rem", backgroundColor: "#1e2836" }}>
+                <p style={{ margin: "0 0 0.5rem 0", fontWeight: "bold", color: "#e8f0f8" }}>Image {idx + 1}</p>
+                <img
+                  src={`data:image/png;base64,${base64Image}`}
+                  alt={`Processed ${idx + 1}`}
+                  style={{ maxWidth: "100%", height: "auto", borderRadius: "4px" }}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
