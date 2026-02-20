@@ -10,6 +10,7 @@ module.exports = {
     // Google Gemini
     geminiApiKey: process.env.GEMINI_API_KEY || '',
 
-    // OCR provider: 'gemini' | 'openai'
-    ocrProvider: process.env.OCR_PROVIDER || 'gemini',
+    // TTS
+    ttsModel: process.env.TTS_MODEL || 'tts-1',
+    ttsDefaultVoice: process.env.TTS_DEFAULT_VOICE || 'nova',
 };
