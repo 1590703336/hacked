@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { captureService, summarizerService, MOCK_CAPTURES } from "../services/index.js";
+import { captureService, summarizerService, ocrService, MOCK_CAPTURES } from "../services/index.js";
 
 export default function HomePage({ navigate }) {
   const [isDragging, setIsDragging] = useState(false);
@@ -21,9 +21,27 @@ export default function HomePage({ navigate }) {
 
   const processFile = async (file) => {
     setIsProcessing(true);
-    const result = await captureService.upload(file);
-    setIsProcessing(false);
-    if (result.success) navigate("reader", { text: result.data.text, title: file.name });
+    try {
+      const uploadResult = await captureService.upload(file);
+      if (uploadResult.success && uploadResult.data.images?.length > 0) {
+        let fullMarkdown = "";
+        // Process sequentially to avoid aggressive rate-limiting on the AI provider for long docs
+        for (const imageBase64 of uploadResult.data.images) {
+          const ocrResult = await ocrService.process(imageBase64);
+          if (ocrResult.success && ocrResult.data.markdown) {
+            fullMarkdown += ocrResult.data.markdown + "\n\n";
+          }
+        }
+
+        if (fullMarkdown.trim()) {
+          navigate("reader", { text: fullMarkdown.trim(), title: file.name });
+        }
+      }
+    } catch (error) {
+      console.error("Processing failed:", error);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -43,7 +61,7 @@ export default function HomePage({ navigate }) {
           <div className="hero-actions">
             <button className="btn-primary" onClick={() => fileRef.current.click()}>
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <path d="M9 2v10M4 7l5-5 5 5M3 15h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M9 2v10M4 7l5-5 5 5M3 15h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               Upload Document
             </button>
@@ -88,10 +106,10 @@ export default function HomePage({ navigate }) {
           <>
             <div className="drop-icon">
               <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-                <rect x="8" y="6" width="24" height="28" rx="3" stroke="var(--accent)" strokeWidth="1.5"/>
-                <path d="M14 14h12M14 19h12M14 24h8" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round"/>
+                <rect x="8" y="6" width="24" height="28" rx="3" stroke="var(--accent)" strokeWidth="1.5" />
+                <path d="M14 14h12M14 19h12M14 24h8" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" />
                 <circle cx="30" cy="30" r="8" fill="var(--accent)" />
-                <path d="M30 26v8M26 30h8" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
+                <path d="M30 26v8M26 30h8" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
             </div>
             <p className="drop-title">Drop PDF or image here</p>
