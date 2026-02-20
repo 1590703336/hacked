@@ -1,12 +1,14 @@
 // ─── SERVICE TOGGLE ────────────────────────────────────────────────────────
-// Set USE_MOCK = false when backend is ready
+// Change VITE_USE_MOCK in the .env file to switch between mock and real API
+// VITE_USE_MOCK=true  → uses hardcoded mock data (no backend needed)
+// VITE_USE_MOCK=false → uses real backend at localhost:3001
 
 import * as mockServices from "./mock.js";
-// import * as apiServices from "./api.js"; // uncomment when backend ready
+import * as apiServices from "./api.js";
 
-const USE_MOCK = true;
+const USE_MOCK = import.meta.env.VITE_USE_MOCK !== "false";
 
-const services = USE_MOCK ? mockServices : mockServices; // swap right side to apiServices when ready
+const services = USE_MOCK ? mockServices : apiServices;
 
 export const ocrService        = services.ocr;
 export const summarizerService = services.summarizer;
