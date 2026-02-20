@@ -1,20 +1,25 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
 const config = require('../../config');
 const { ProviderError } = require('../../shared/errors');
 const pdf2img = require('pdf-img-convert');
 
-const genAI = new GoogleGenerativeAI(config.geminiApiKey);
+const openrouter = new OpenAI({
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey: config.openRouterApiKey,
+});
 
 // ---------------------------------------------------------------------------
 // System prompt — both models share the same instruction for consistency
 // ---------------------------------------------------------------------------
 const OCR_PROMPT = `You are an expert OCR assistant. Extract ALL text visible in this image with maximum fidelity.
 Rules:
-1. Convert ALL mathematical expressions to LaTeX: inline with $...$, block with $$...$$.
-2. Wrap code blocks in fenced Markdown with the detected language tag.
-3. Preserve all headings (#, ##, ###), bullet lists, numbered lists, and tables as Markdown.
-4. Do NOT add commentary, summaries, or interpretations — extracted content only.
-5. If the image contains no readable text, respond with exactly: [NO_TEXT_DETECTED]`;
+1. Maintain the reading order (top-to-bottom, left-to-right).
+2. Convert ALL mathematical expressions to LaTeX: inline with $...$, block with $$...$$.
+3. Wrap code blocks in fenced Markdown with the detected language tag.
+4. Preserve all headings (#, ##, ###), bullet lists, numbered lists, and tables as Markdown.
+5. For graphs or charts, provide a brief description of their contents and any data trends shown.
+6. Do NOT add commentary, summaries, or personal interpretations — extracted content only.
+7. If the image contains no readable text, respond with exactly: [NO_TEXT_DETECTED]`;
 
 // ---------------------------------------------------------------------------
 // Retry helper
@@ -74,9 +79,9 @@ function sanitiseResponse(raw) {
  * @returns {object}           - { markdown, noTextDetected, model, mimeType, latencyMs, usage }
  */
 async function recognize(imageBase64, mimeType) {
-    // Fail fast if API key is missing — no point attempting a call
-    if (!config.geminiApiKey) {
-        throw new ProviderError(config.ocr.model, 'GEMINI_API_KEY is not configured');
+    // Fail fast if API key is missing
+    if (!config.openRouterApiKey) {
+        throw new ProviderError(config.ocr.model, 'OPENROUTER_API_KEY is not configured');
     }
 
     let finalBase64 = imageBase64;
@@ -108,29 +113,27 @@ async function recognize(imageBase64, mimeType) {
         }
     }
 
-    const model = genAI.getGenerativeModel({
-        model: config.ocr.model,
-        generationConfig: {
-            maxOutputTokens: config.ocr.maxOutputTokens,
-        },
-        safetySettings: [
-            // Set to BLOCK_NONE so academic content (medical, chemistry, code) is not blocked
-            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-        ],
-    });
-
     const start = Date.now();
     let result;
 
     try {
         result = await retryWithBackoff(() =>
-            model.generateContent([
-                { inlineData: { mimeType: finalMime, data: finalBase64 } },
-                { text: OCR_PROMPT },
-            ])
+            openrouter.chat.completions.create({
+                model: config.ocr.model,
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: OCR_PROMPT },
+                            {
+                                type: 'image_url',
+                                image_url: { url: `data:${finalMime};base64,${finalBase64}` },
+                            },
+                        ],
+                    },
+                ],
+                max_tokens: config.ocr.maxOutputTokens,
+            })
         );
     } catch (err) {
         throw new ProviderError(config.ocr.model, err.message, err);
@@ -138,7 +141,7 @@ async function recognize(imageBase64, mimeType) {
 
     const latencyMs = Date.now() - start;
 
-    const raw = result.response?.text()?.trim() ?? '';
+    const raw = result.choices[0]?.message?.content?.trim() ?? '';
     const noTextDetected = !raw || raw === '[NO_TEXT_DETECTED]';
     const markdown = noTextDetected ? '' : sanitiseResponse(raw);
 
@@ -151,9 +154,9 @@ async function recognize(imageBase64, mimeType) {
         mimeType,
         latencyMs,
         usage: {
-            promptTokens: meta.promptTokenCount ?? 0,
-            completionTokens: meta.candidatesTokenCount ?? 0,
-            totalTokens: meta.totalTokenCount ?? 0,
+            promptTokens: result.usage?.prompt_tokens ?? 0,
+            completionTokens: result.usage?.completion_tokens ?? 0,
+            totalTokens: result.usage?.total_tokens ?? 0,
         },
     };
 }

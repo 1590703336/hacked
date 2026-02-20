@@ -4,7 +4,14 @@ const OpenAI = require('openai');
 const config = require('../../config');
 const { ValidationError } = require('../../shared/errors');
 
+// Standard OpenAI client strictly for Audio APIs (Whisper/TTS)
 const openai = new OpenAI({ apiKey: config.openaiApiKey });
+
+// OpenRouter client for Chat Completions
+const openrouter = new OpenAI({
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey: config.openRouterApiKey,
+});
 
 /**
  * Answer a user's spoken question using the current reading context.
@@ -18,12 +25,12 @@ async function answerQuestion(question, context) {
         throw new ValidationError('question is required');
     }
 
-    const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
+    const response = await openrouter.chat.completions.create({
+        model: 'openai/gpt-4o',
         messages: [
             {
                 role: 'system',
-                content: `You are a friendly, patient AI tutor designed for students with cognitive accessibility needs. The student is currently reading a passage and has paused to ask a question. Use the reading context to answer with a relatable, real-world analogy. Keep your answer concise (2-3 sentences max) and avoid jargon.`,
+                content: `You are a friendly, patient AI tutor designed for students with cognitive accessibility needs. The student is currently reading a passage and has paused to ask a question. Use the reading context and answer with a relatable, everyday real-world analogy (e.g., baking, sports, driving) to explain the concept. Keep your answer concise (2-3 sentences max) and avoid jargon. Do not patronize or use overly childish language; treat the student as an adult learner needing clarity.`,
             },
             {
                 role: 'user',
@@ -53,8 +60,9 @@ async function transcribeAudio(file) {
         throw new ValidationError('No audio file provided');
     }
 
-    // Write buffer to a temp file for the Whisper API
-    const tempPath = path.join('/tmp', `whisper-${Date.now()}.webm`);
+    // Write buffer to a temp file for the Whisper API, preserving the file extension so OpenAI accepts it
+    const ext = file.originalname ? path.extname(file.originalname) : '.webm';
+    const tempPath = path.join('/tmp', `whisper-${Date.now()}${ext}`);
     fs.writeFileSync(tempPath, file.buffer);
 
     try {
