@@ -8,13 +8,13 @@ const MIME_MAGIC = [
     { prefix: 'UklGR', mime: 'image/webp' },
     { prefix: 'R0lGODdh', mime: 'image/gif' }, // GIF87a
     { prefix: 'R0lGODlh', mime: 'image/gif' }, // GIF89a
+    { prefix: 'JVBER', mime: 'application/pdf' }, // PDF
 ];
 
 // Unsupported formats — give a helpful message so the user knows what to do
 const BLOCKED_MAGIC = [
     { prefix: 'SUkqAA', label: 'TIFF' },
     { prefix: 'TU0AKg', label: 'TIFF' },
-    { prefix: 'JVBER', label: 'PDF' },
 ];
 
 /**
@@ -98,14 +98,9 @@ function validateOcrRequest(req, _res, next) {
     // 8. MIME magic-byte detection
     const { mime, blocked } = detectMime(b64);
 
-    if (blocked === 'PDF') {
-        return next(new ValidationError(
-            'PDF files are not supported here. Use POST /api/capture/upload instead.'
-        ));
-    }
     if (!mime) {
         return next(new ValidationError(
-            'Unsupported image format. Accepted: JPEG, PNG, WebP, GIF'
+            'Unsupported image format. Accepted: JPEG, PNG, WebP, GIF, PDF'
         ));
     }
 

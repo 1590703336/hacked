@@ -32,7 +32,7 @@ Content-Type: application/json
 
 ###──────────────────────────────────────────────────────────────────────────────
 ### Case 4 — PDF base64 magic bytes (JVBERi0... = %PDF-)
-### Expected: 400 { success: false, error: "ValidationError", message: "PDF..." }
+### Expected: 200 { success: true, data.markdown: "..." }
 POST http://localhost:3001/api/ocr
 Content-Type: application/json
 
