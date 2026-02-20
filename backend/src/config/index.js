@@ -12,7 +12,7 @@ module.exports = {
     ttsDefaultVoice: process.env.TTS_DEFAULT_VOICE || 'nova',
 
     ocr: {
-        model: process.env.OCR_MODEL || 'google/gemini-2.5-flash',
+        model: process.env.OCR_MODEL || 'google/gemini-3-flash-preview',
         maxImageBytes: 10 * 1024 * 1024,   // 10 MB decoded image limit
         maxOutputTokens: 4096,
         retryMaxAttempts: 3,

@@ -1,7 +1,7 @@
 const OpenAI = require('openai');
 const config = require('../../config');
 const { ProviderError } = require('../../shared/errors');
-const pdf2img = require('pdf-img-convert');
+const { pdfToPng } = require('pdf-to-png-converter');
 
 const openrouter = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
@@ -72,7 +72,7 @@ function sanitiseResponse(raw) {
 // ---------------------------------------------------------------------------
 
 /**
- * Recognise text in an image using Gemini 3 Flash.
+ * Recognise text in an image using the configured OpenRouter vision model.
  *
  * @param {string} imageBase64 - Cleaned Base64-encoded image (no data-URL prefix)
  * @param {string} mimeType    - Detected MIME type (e.g. 'image/png')
@@ -92,22 +92,20 @@ async function recognize(imageBase64, mimeType) {
         try {
             const pdfBuffer = Buffer.from(imageBase64, 'base64');
             // convert strictly the first page to base64
-            const pdfPages = await pdf2img.convert(pdfBuffer, { page_numbers: [1], base64: true });
+            const pngPages = await pdfToPng(pdfBuffer, {
+                pagesToProcess: [1],
+                disableFontFace: false,
+                useSystemFonts: true,
+                viewportScale: 2.0
+            });
 
-            if (!pdfPages || pdfPages.length === 0) {
+            if (!pngPages || pngPages.length === 0) {
                 throw new Error('No pages extracted');
             }
 
-            finalBase64 = pdfPages[0];
-            finalMime = 'image/png'; // pdf-img-convert outputs PNG
+            finalBase64 = pngPages[0].content.toString('base64');
+            finalMime = 'image/png';
 
-            // Clean up base64 if it has a data URL prefix
-            if (typeof finalBase64 === 'string' && finalBase64.includes(';base64,')) {
-                finalBase64 = finalBase64.split(';base64,')[1];
-            } else if (finalBase64 instanceof Uint8Array || finalBase64 instanceof Buffer) {
-                // In case base64: true is ignored
-                finalBase64 = Buffer.from(finalBase64).toString('base64');
-            }
         } catch (err) {
             throw new ProviderError(config.ocr.model, `PDF conversion failed: ${err.message}`, err);
         }

@@ -25,9 +25,9 @@ jest.mock('@google/generative-ai', () => {
 
 // ─── 3. Mock config (low retry counts so tests are instant) ──────────────────
 jest.mock('../../config', () => ({
-    geminiApiKey: 'test-key',          // non-empty → guard passes
+    openRouterApiKey: 'test-key',      // non-empty → guard passes
     ocr: {
-        model: 'gemini-3-flash-preview',
+        model: 'google/gemini-3-flash-preview',
         maxOutputTokens: 4096,
         retryMaxAttempts: 2,    // low so tests fail fast
         retryBaseDelayMs: 1,    // 1 ms — tests don't actually wait
@@ -80,7 +80,7 @@ describe('ocr.service — recognize()', () => {
 
         expect(result.markdown).toBe('## Title\n\n$$E = mc^2$$');
         expect(result.noTextDetected).toBe(false);
-        expect(result.model).toBe('gemini-3-flash-preview');
+        expect(result.model).toBe('google/gemini-3-flash-preview');
         expect(result.mimeType).toBe(MIME);
         expect(typeof result.latencyMs).toBe('number');
         expect(result.usage.totalTokens).toBe(15);
@@ -150,10 +150,10 @@ describe('ocr.service — recognize()', () => {
         expect(mockGenerateContent).toHaveBeenCalledTimes(1);
     });
 
-    test('8. Missing GEMINI_API_KEY → ProviderError thrown, no API call made', async () => {
+    test('8. Missing OPENROUTER_API_KEY → ProviderError thrown, no API call made', async () => {
         const config = require('../../config');
-        const originalKey = config.geminiApiKey;
-        config.geminiApiKey = '';  // simulate missing key
+        const originalKey = config.openRouterApiKey;
+        config.openRouterApiKey = '';  // simulate missing key
 
         await expect(recognize(VALID_PNG, MIME)).rejects.toMatchObject({
             name: 'ProviderError',
@@ -161,7 +161,7 @@ describe('ocr.service — recognize()', () => {
         });
         expect(mockGenerateContent).not.toHaveBeenCalled();
 
-        config.geminiApiKey = originalKey; // restore
+        config.openRouterApiKey = originalKey; // restore
     });
 
 });

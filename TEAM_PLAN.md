@@ -18,7 +18,7 @@ Each module already has `controller → service → router → validator` scaffo
 
 | # | Module | Task | Deliverable |
 |---|--------|------|-------------|
-| 1 | **OCR** | Implement Gemini 3 Flash + GPT-4o Vision dual-provider | `POST /api/ocr` returns structured Markdown with LaTeX |
+| 1 | **OCR** | Implement OCR via OpenRouter model `google/gemini-3-flash-preview` | `POST /api/ocr` returns structured Markdown with LaTeX |
 | 2 | **Summarizer** | Implement GPT-4o TL;DR with ≤3 plain-English takeaways | `POST /api/summarize` returns `{ takeaways: string[] }` |
 | 3 | **Capture** | Implement PDF parsing (`pdf-parse`) + base64 image ingestion | `POST /api/capture/upload` and `/screen` |
 
@@ -42,8 +42,8 @@ Each module already has `controller → service → router → validator` scaffo
 
 ```
 POST /api/ocr
-  Body: { imageBase64: string, provider?: "gemini" | "openai" }
-  Response: { success: true, data: { markdown: string, provider: string } }
+  Body: { imageBase64: string }
+  Response: { success: true, data: { markdown: string, noTextDetected: boolean, model: "google/gemini-3-flash-preview" } }
 
 POST /api/summarize
   Body: { text: string, maxTakeaways?: number }

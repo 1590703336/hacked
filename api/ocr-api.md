@@ -1,6 +1,6 @@
 # OCR Module API Documentation
 
-This module handles optical character recognition (OCR) of images and PDFs, extracting structured text, code blocks, and mathematical expressions (LaTeX) using Gemini 3 Flash.
+This module handles optical character recognition (OCR) of images and PDFs, extracting structured text, code blocks, and mathematical expressions (LaTeX) using OpenRouter model `google/gemini-3-flash-preview`.
 
 ## 1. Recognize Text
 
@@ -25,7 +25,7 @@ Converts a base64 encoded image or PDF document into formatted Markdown text.
   "data": {
     "markdown": "## Title\n\n$$E = mc^2$$\n\n```python\nprint('Hello World')\n```",
     "noTextDetected": false,
-    "model": "gemini-3-flash-preview",
+    "model": "google/gemini-3-flash-preview",
     "mimeType": "image/jpeg",
     "latencyMs": 1840,
     "usage": {
@@ -46,7 +46,7 @@ Converts a base64 encoded image or PDF document into formatted Markdown text.
   "data": {
     "markdown": "",
     "noTextDetected": true,
-    "model": "gemini-3-flash-preview",
+    "model": "google/gemini-3-flash-preview",
     "mimeType": "image/jpeg",
     "latencyMs": 850,
     "usage": {
@@ -76,6 +76,6 @@ Returned when the upstream AI provider is unavailable, quota is exceeded, or API
 {
   "success": false,
   "error": "ProviderError",
-  "message": "[gemini-3-flash-preview] quota exceeded"
+  "message": "[google/gemini-3-flash-preview] quota exceeded"
 }
 ```

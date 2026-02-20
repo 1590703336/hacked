@@ -25,11 +25,11 @@ async function postForm(endpoint, formData) {
 
 // ─── OCR ──────────────────────────────────────────────────────────────────
 // POST /api/ocr
-// Body: { imageBase64: string, provider?: "gemini" | "openai" }
-// Response: { success: true, data: { markdown: string, provider: string } }
+// Body: { imageBase64: string }
+// Response: { success: true, data: { markdown: string, noTextDetected: boolean, model: string } }
 export const ocr = {
-  process: async (imageBase64, provider = "gemini") => {
-    return post("/ocr", { imageBase64, provider });
+  process: async (imageBase64) => {
+    return post("/ocr", { imageBase64 });
   },
 };
 

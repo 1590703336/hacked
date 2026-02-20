@@ -1,6 +1,6 @@
 const { ValidationError } = require('../../shared/errors');
 
-const pdf2img = require('pdf-img-convert');
+const { pdfToPng } = require('pdf-to-png-converter');
 
 /**
  * Process an uploaded file (PDF or image).
@@ -15,11 +15,12 @@ async function processUpload(file) {
     let images = [];
 
     if (file.mimetype === 'application/pdf') {
-        const pdfArray = await pdf2img.convert(file.buffer, {
-            base64: true,
-            scale: 2.0 // Better resolution for OCR
+        const pngPages = await pdfToPng(file.buffer, {
+            disableFontFace: false,
+            useSystemFonts: true,
+            viewportScale: 2.0
         });
-        images = pdfArray; // These are base64 strings
+        images = pngPages.map(p => p.content.toString('base64')); // These are base64 strings
     } else if (file.mimetype.startsWith('image/')) {
         images = [file.buffer.toString('base64')];
     } else {

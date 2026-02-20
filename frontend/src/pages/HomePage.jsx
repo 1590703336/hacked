@@ -23,22 +23,34 @@ export default function HomePage({ navigate }) {
     setIsProcessing(true);
     try {
       const uploadResult = await captureService.upload(file);
+      if (!uploadResult.success) {
+        alert(`Upload failed: ${JSON.stringify(uploadResult.message || uploadResult)}`);
+        return;
+      }
+
       if (uploadResult.success && uploadResult.data.images?.length > 0) {
         let fullMarkdown = "";
-        // Process sequentially to avoid aggressive rate-limiting on the AI provider for long docs
         for (const imageBase64 of uploadResult.data.images) {
+          console.log("Capture generated base64 length:", imageBase64.length, "starts with:", imageBase64.substring(0, 50));
           const ocrResult = await ocrService.process(imageBase64);
-          if (ocrResult.success && ocrResult.data.markdown) {
+          if (!ocrResult.success) {
+            alert(`OCR Failed for an image: ${JSON.stringify(ocrResult.message || ocrResult)}`);
+          } else if (ocrResult.data.markdown) {
             fullMarkdown += ocrResult.data.markdown + "\n\n";
           }
         }
 
         if (fullMarkdown.trim()) {
           navigate("reader", { text: fullMarkdown.trim(), title: file.name });
+        } else {
+          alert('OCR returned no text for this file.');
         }
+      } else {
+        alert('Capture API succeeded but returned no images.');
       }
     } catch (error) {
       console.error("Processing failed:", error);
+      alert("Network or processing error: " + error.message);
     } finally {
       setIsProcessing(false);
     }

@@ -49,7 +49,7 @@ Designed specifically for students facing cognitive overload, dyslexia, ADHD, or
 | **Backend** | Node.js + Express |
 | **Frontend** | React + Vite |
 | **Styling** | TailwindCSS v4 |
-| **OCR / Vision** | Google Gemini 3 Flash / OpenAI GPT-4o |
+| **OCR / Vision** | OpenRouter `google/gemini-3-flash-preview` / OpenAI GPT-4o |
 | **TTS** | OpenAI TTS API |
 | **STT** | OpenAI Whisper API |
 | **Build / Package** | electron-builder |

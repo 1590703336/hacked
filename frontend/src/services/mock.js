@@ -8,7 +8,8 @@ export const ocr = {
       success: true,
       data: {
         markdown: MOCK_CONTENT,
-        provider: "gemini"
+        noTextDetected: false,
+        model: "google/gemini-3-flash-preview"
       }
     };
   }

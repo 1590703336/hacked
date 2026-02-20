@@ -108,7 +108,7 @@ function validateOcrRequest(req, _res, next) {
     req.body.imageBase64 = b64;
     req.body.mimeType = mime;
 
-    // provider field is intentionally ignored — model selection is server-side only
+    // model selection is server-side only; extra client fields are ignored
     next();
 }
 

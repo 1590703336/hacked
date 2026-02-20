@@ -22,7 +22,7 @@ class ValidationError extends AppError {
 
 class ProviderError extends AppError {
     /**
-     * @param {string} model  - The AI model that failed (e.g. 'gemini-3-flash-preview')
+     * @param {string} model  - The AI model that failed (e.g. 'google/gemini-3-flash-preview')
      * @param {string} message - Human-readable reason
      * @param {Error|null} originalError - Raw upstream error (never sent to client)
      */
