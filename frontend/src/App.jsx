@@ -1,35 +1,27 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { useState } from "react";
+import HomePage from "./pages/HomePage";
+import ReaderPage from "./pages/ReaderPage";
+import TutorPage from "./pages/TutorPage";
+import Navbar from "./components/layout/Navbar";
+import "./App.css";
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const [currentPage, setCurrentPage] = useState("home");
+  const [capturedContent, setCapturedContent] = useState(null);
+
+  const navigate = (page, data = null) => {
+    if (data) setCapturedContent(data);
+    setCurrentPage(page);
+  };
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <div className="app-shell">
+      <Navbar currentPage={currentPage} navigate={navigate} />
+      <main className="page-container">
+        {currentPage === "home" && <HomePage navigate={navigate} />}
+        {currentPage === "reader" && <ReaderPage content={capturedContent} navigate={navigate} />}
+        {currentPage === "tutor" && <TutorPage content={capturedContent} navigate={navigate} />}
+      </main>
+    </div>
+  );
 }
-
-export default App

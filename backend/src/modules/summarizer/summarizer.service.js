@@ -28,10 +28,17 @@ async function summarize(text, maxTakeaways = 3) {
         max_tokens: 500,
     });
 
-    const summary = response.choices[0]?.message?.content || '';
+    const raw = response.choices[0]?.message?.content || '';
+
+    // Strip common GPT list formatting (e.g. "1.", "1)", "-", "•", "–") and enforce cap
+    const takeaways = raw
+        .split('\n')
+        .map((line) => line.replace(/^[\s\d]+[.)]\s*|^[-–•]\s*/u, '').trim())
+        .filter((line) => line.length > 0)
+        .slice(0, maxTakeaways);
 
     return {
-        takeaways: summary.split('\n').filter((line) => line.trim()),
+        takeaways,
         model: 'gpt-4o',
         tokensUsed: response.usage?.total_tokens || 0,
     };
