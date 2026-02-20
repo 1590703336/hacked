@@ -1,6 +1,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const config = require('../../config');
 const { ProviderError } = require('../../shared/errors');
+const pdf2img = require('pdf-img-convert');
 
 const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 
@@ -78,6 +79,35 @@ async function recognize(imageBase64, mimeType) {
         throw new ProviderError(config.ocr.model, 'GEMINI_API_KEY is not configured');
     }
 
+    let finalBase64 = imageBase64;
+    let finalMime = mimeType;
+
+    // Handle PDF conversion
+    if (mimeType === 'application/pdf') {
+        try {
+            const pdfBuffer = Buffer.from(imageBase64, 'base64');
+            // convert strictly the first page to base64
+            const pdfPages = await pdf2img.convert(pdfBuffer, { page_numbers: [1], base64: true });
+
+            if (!pdfPages || pdfPages.length === 0) {
+                throw new Error('No pages extracted');
+            }
+
+            finalBase64 = pdfPages[0];
+            finalMime = 'image/png'; // pdf-img-convert outputs PNG
+
+            // Clean up base64 if it has a data URL prefix
+            if (typeof finalBase64 === 'string' && finalBase64.includes(';base64,')) {
+                finalBase64 = finalBase64.split(';base64,')[1];
+            } else if (finalBase64 instanceof Uint8Array || finalBase64 instanceof Buffer) {
+                // In case base64: true is ignored
+                finalBase64 = Buffer.from(finalBase64).toString('base64');
+            }
+        } catch (err) {
+            throw new ProviderError(config.ocr.model, `PDF conversion failed: ${err.message}`, err);
+        }
+    }
+
     const model = genAI.getGenerativeModel({
         model: config.ocr.model,
         generationConfig: {
@@ -98,7 +128,7 @@ async function recognize(imageBase64, mimeType) {
     try {
         result = await retryWithBackoff(() =>
             model.generateContent([
-                { inlineData: { mimeType, data: imageBase64 } },
+                { inlineData: { mimeType: finalMime, data: finalBase64 } },
                 { text: OCR_PROMPT },
             ])
         );
