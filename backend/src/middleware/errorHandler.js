@@ -1,6 +1,11 @@
 const { AppError } = require('../shared/errors');
 
 function errorHandler(err, _req, res, _next) {
+    // Log full upstream error server-side — never expose to client
+    if (err.originalError) {
+        console.error('[ErrorHandler] upstream error:', err.originalError);
+    }
+
     if (err instanceof AppError) {
         return res.status(err.statusCode).json({
             success: false,

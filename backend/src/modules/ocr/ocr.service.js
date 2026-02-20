@@ -1,88 +1,131 @@
-const OpenAI = require('openai');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const config = require('../../config');
-const { ValidationError, AppError } = require('../../shared/errors');
+const { ProviderError } = require('../../shared/errors');
 
-const openai = new OpenAI({ apiKey: config.openaiApiKey });
 const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 
+// ---------------------------------------------------------------------------
+// System prompt — both models share the same instruction for consistency
+// ---------------------------------------------------------------------------
+const OCR_PROMPT = `You are an expert OCR assistant. Extract ALL text visible in this image with maximum fidelity.
+Rules:
+1. Convert ALL mathematical expressions to LaTeX: inline with $...$, block with $$...$$.
+2. Wrap code blocks in fenced Markdown with the detected language tag.
+3. Preserve all headings (#, ##, ###), bullet lists, numbered lists, and tables as Markdown.
+4. Do NOT add commentary, summaries, or interpretations — extracted content only.
+5. If the image contains no readable text, respond with exactly: [NO_TEXT_DETECTED]`;
+
+// ---------------------------------------------------------------------------
+// Retry helper
+// ---------------------------------------------------------------------------
+
+// HTTP status codes and Node error codes that are safe to retry
+const RETRYABLE_STATUS = new Set([429, 503]);
+const RETRYABLE_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND']);
+
 /**
- * Recognize text from a base64-encoded image.
- * Supports two providers: 'gemini' (Gemini 3 Flash) and 'openai' (GPT-4o Vision).
- *
- * @param {string} imageBase64 - Base64-encoded image data
- * @param {string} provider - 'gemini' | 'openai' (defaults to config)
- * @returns {object} recognized text and metadata
+ * Calls fn() up to retryMaxAttempts times with exponential backoff.
+ * Only retries on transient errors; propagates permanent errors immediately.
  */
-async function recognize(imageBase64, provider) {
-    if (!imageBase64) {
-        throw new ValidationError('imageBase64 is required');
-    }
+async function retryWithBackoff(fn) {
+    const { retryMaxAttempts, retryBaseDelayMs, retryMaxDelayMs } = config.ocr;
 
-    const selectedProvider = provider || config.ocrProvider;
+    for (let attempt = 1; attempt <= retryMaxAttempts; attempt++) {
+        try {
+            return await fn();
+        } catch (err) {
+            const status = err.status ?? err.httpErrorCode?.status ?? err.response?.status;
+            const isRetryable = RETRYABLE_STATUS.has(status) || RETRYABLE_CODES.has(err.code);
+            const isLastAttempt = attempt === retryMaxAttempts;
 
-    if (selectedProvider === 'gemini') {
-        return recognizeWithGemini(imageBase64);
-    } else if (selectedProvider === 'openai') {
-        return recognizeWithOpenAI(imageBase64);
-    } else {
-        throw new ValidationError(`Unknown OCR provider: ${selectedProvider}`);
+            if (!isRetryable || isLastAttempt) throw err;
+
+            const delay = Math.min(retryBaseDelayMs * 2 ** (attempt - 1), retryMaxDelayMs);
+            console.warn(`[OCR] Gemini attempt ${attempt} failed (status: ${status}), retrying in ${delay}ms…`);
+            await new Promise(r => setTimeout(r, delay));
+        }
     }
 }
 
-async function recognizeWithGemini(imageBase64) {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+// ---------------------------------------------------------------------------
+// Response sanitiser
+// ---------------------------------------------------------------------------
 
-    const result = await model.generateContent([
-        {
-            inlineData: {
-                mimeType: 'image/png',
-                data: imageBase64,
-            },
-        },
-        {
-            text: 'Extract all text from this image. If there are math formulas, convert them to standard LaTeX format. If there is code, preserve the formatting. Output the result as clean structured Markdown.',
-        },
-    ]);
-
-    const text = result.response?.text() || '';
-
-    return {
-        markdown: text,
-        provider: 'gemini',
-        model: 'gemini-2.0-flash',
-    };
+/**
+ * Strip outer triple-backtick fence if the model wraps the entire response in one.
+ * e.g.  ```markdown\n...\n```  →  ...
+ */
+function sanitiseResponse(raw) {
+    const fenceMatch = raw.match(/^```[a-z]*\n([\s\S]*)\n```$/);
+    if (fenceMatch) return fenceMatch[1].trim();
+    return raw.trim();
 }
 
-async function recognizeWithOpenAI(imageBase64) {
-    const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-            {
-                role: 'user',
-                content: [
-                    {
-                        type: 'text',
-                        text: 'Extract all text from this image. If there are math formulas, convert them to standard LaTeX format. If there is code, preserve the formatting. Output the result as clean structured Markdown.',
-                    },
-                    {
-                        type: 'image_url',
-                        image_url: { url: `data:image/png;base64,${imageBase64}` },
-                    },
-                ],
-            },
+// ---------------------------------------------------------------------------
+// Main exported function
+// ---------------------------------------------------------------------------
+
+/**
+ * Recognise text in an image using Gemini 3 Flash.
+ *
+ * @param {string} imageBase64 - Cleaned Base64-encoded image (no data-URL prefix)
+ * @param {string} mimeType    - Detected MIME type (e.g. 'image/png')
+ * @returns {object}           - { markdown, noTextDetected, model, mimeType, latencyMs, usage }
+ */
+async function recognize(imageBase64, mimeType) {
+    // Fail fast if API key is missing — no point attempting a call
+    if (!config.geminiApiKey) {
+        throw new ProviderError(config.ocr.model, 'GEMINI_API_KEY is not configured');
+    }
+
+    const model = genAI.getGenerativeModel({
+        model: config.ocr.model,
+        generationConfig: {
+            maxOutputTokens: config.ocr.maxOutputTokens,
+        },
+        safetySettings: [
+            // Set to BLOCK_NONE so academic content (medical, chemistry, code) is not blocked
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
         ],
-        max_tokens: 4096,
     });
 
-    const text = response.choices[0]?.message?.content || '';
+    const start = Date.now();
+    let result;
+
+    try {
+        result = await retryWithBackoff(() =>
+            model.generateContent([
+                { inlineData: { mimeType, data: imageBase64 } },
+                { text: OCR_PROMPT },
+            ])
+        );
+    } catch (err) {
+        throw new ProviderError(config.ocr.model, err.message, err);
+    }
+
+    const latencyMs = Date.now() - start;
+
+    const raw = result.response?.text()?.trim() ?? '';
+    const noTextDetected = !raw || raw === '[NO_TEXT_DETECTED]';
+    const markdown = noTextDetected ? '' : sanitiseResponse(raw);
+
+    const meta = result.response?.usageMetadata ?? {};
 
     return {
-        markdown: text,
-        provider: 'openai',
-        model: 'gpt-4o',
-        tokensUsed: response.usage?.total_tokens || 0,
+        markdown,
+        noTextDetected,
+        model: config.ocr.model,
+        mimeType,
+        latencyMs,
+        usage: {
+            promptTokens: meta.promptTokenCount ?? 0,
+            completionTokens: meta.candidatesTokenCount ?? 0,
+            totalTokens: meta.totalTokenCount ?? 0,
+        },
     };
 }
 
-module.exports = { recognize };
+module.exports = { recognize, sanitiseResponse, retryWithBackoff };

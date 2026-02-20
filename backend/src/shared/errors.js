@@ -20,4 +20,18 @@ class ValidationError extends AppError {
     }
 }
 
-module.exports = { AppError, NotFoundError, ValidationError };
+class ProviderError extends AppError {
+    /**
+     * @param {string} model  - The AI model that failed (e.g. 'gemini-3-flash-preview')
+     * @param {string} message - Human-readable reason
+     * @param {Error|null} originalError - Raw upstream error (never sent to client)
+     */
+    constructor(model, message, originalError = null) {
+        super(`[${model}] ${message}`, 502);
+        this.name = 'ProviderError';
+        this.model = model;
+        this.originalError = originalError; // kept server-side for logging only
+    }
+}
+
+module.exports = { AppError, NotFoundError, ValidationError, ProviderError };

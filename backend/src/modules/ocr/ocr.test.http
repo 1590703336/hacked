@@ -1,0 +1,61 @@
+### OCR Module — Manual Smoke Tests
+### Run against: POST http://localhost:3001/api/ocr
+### Requires: server running (`npm run dev`) + real GEMINI_API_KEY in .env
+
+###──────────────────────────────────────────────────────────────────────────────
+### Case 1 — Valid PNG (base64 of a real image)
+### Expected: 200 { success: true, data.markdown: "..." }
+POST http://localhost:3001/api/ocr
+Content-Type: application/json
+
+{
+  "imageBase64": "{{PNG_BASE64_HERE}}"
+}
+
+###──────────────────────────────────────────────────────────────────────────────
+### Case 2 — Valid JPEG with data-URL prefix (should be stripped transparently)
+### Expected: 200 { success: true }
+POST http://localhost:3001/api/ocr
+Content-Type: application/json
+
+{
+  "imageBase64": "data:image/jpeg;base64,{{JPEG_BASE64_HERE}}"
+}
+
+###──────────────────────────────────────────────────────────────────────────────
+### Case 3 — Missing imageBase64 body field (no API key required)
+### Expected: 400 { success: false, error: "ValidationError" }
+POST http://localhost:3001/api/ocr
+Content-Type: application/json
+
+{}
+
+###──────────────────────────────────────────────────────────────────────────────
+### Case 4 — PDF base64 magic bytes (JVBERi0... = %PDF-)
+### Expected: 400 { success: false, error: "ValidationError", message: "PDF..." }
+POST http://localhost:3001/api/ocr
+Content-Type: application/json
+
+{
+  "imageBase64": "JVBERi0xLjQKJcOkw7zDtsOfCjIgMCBvYmoKPDwKL0xlbmd0aCAzIDAgUgo+Pgo="
+}
+
+###──────────────────────────────────────────────────────────────────────────────
+### Case 5 — Unsupported format (TIFF magic bytes SUkq...)
+### Expected: 400 { success: false, error: "ValidationError", message: "Unsupported..." }
+POST http://localhost:3001/api/ocr
+Content-Type: application/json
+
+{
+  "imageBase64": "SUkqAAgAAAAMAAA="
+}
+
+###──────────────────────────────────────────────────────────────────────────────
+### Case 6 — Plain photo (no text) — requires real API key
+### Expected: 200 { success: true, data.noTextDetected: true, data.markdown: "" }
+POST http://localhost:3001/api/ocr
+Content-Type: application/json
+
+{
+  "imageBase64": "{{PHOTO_NO_TEXT_BASE64_HERE}}"
+}
