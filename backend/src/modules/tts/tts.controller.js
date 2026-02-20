@@ -61,27 +61,45 @@ async function streamChunks(req, res, next) {
         // Send down chunk count metadata straight away
         res.write(`data: ${JSON.stringify({ type: 'metadata', chunkCount: chunks.length })}\n\n`);
 
+        // Send a keepalive heartbeat every 15 seconds so long TTS generations don't drop the connection
+        const keepAliveInterval = setInterval(() => {
+            res.write(': keepalive\n\n');
+        }, 15000);
+
         for (let i = 0; i < chunks.length; i++) {
-            try {
-                // Ensure text is converted to numbers if they were passed as strings
-                const parsedSpeed = speed ? parseFloat(speed) : undefined;
-                const audioBuffer = await ttsService.synthesize(chunks[i], voice, parsedSpeed, model);
+            let attempt = 0;
+            let success = false;
 
-                const base64Audio = audioBuffer.toString('base64');
-                const eventPayload = {
-                    type: 'audio',
-                    chunkIndex: i,
-                    audioBase64: base64Audio,
-                    text: chunks[i],
-                };
+            while (attempt < 2 && !success) {
+                try {
+                    attempt++;
+                    // Ensure text is converted to numbers if they were passed as strings
+                    const parsedSpeed = speed ? parseFloat(speed) : undefined;
+                    const audioBuffer = await ttsService.synthesize(chunks[i], voice, parsedSpeed, model);
 
-                res.write(`data: ${JSON.stringify(eventPayload)}\n\n`);
-            } catch (synthError) {
-                console.error(`Error synthesizing chunk ${i}:`, synthError);
-                res.write(`data: ${JSON.stringify({ type: 'error', message: 'Failed to synthesize chunk', chunkIndex: i })}\n\n`);
+                    const base64Audio = audioBuffer.toString('base64');
+                    const eventPayload = {
+                        type: 'audio',
+                        chunkIndex: i,
+                        audioBase64: base64Audio,
+                        text: chunks[i],
+                    };
+
+                    res.write(`data: ${JSON.stringify(eventPayload)}\n\n`);
+                    success = true; // Break out of retry loop
+                } catch (synthError) {
+                    console.error(`Error synthesizing chunk ${i} (attempt ${attempt}):`, synthError);
+                    if (attempt >= 2) {
+                        res.write(`data: ${JSON.stringify({ type: 'error', message: 'Failed to synthesize chunk after retries', chunkIndex: i })}\n\n`);
+                    } else {
+                        // Wait a short bit before retrying
+                        await new Promise((resolve) => setTimeout(resolve, 1000));
+                    }
+                }
             }
         }
 
+        clearInterval(keepAliveInterval);
         res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
         res.end();
     } catch (err) {

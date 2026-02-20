@@ -1,8 +1,26 @@
 const OpenAI = require('openai');
+const crypto = require('crypto');
+const { LRUCache } = require('lru-cache');
+const pLimit = require('p-limit');
 const config = require('../../config');
 const { ValidationError, AppError } = require('../../shared/errors');
 
 const openai = new OpenAI({ apiKey: config.openaiApiKey });
+
+// Cache up to 500 TTS chunks (approx 50MB of audio in memory) to save API calls
+const ttsCache = new LRUCache({
+    max: 500,
+});
+
+/**
+ * Generate MD5 hash for cache key
+ */
+function generateCacheKey(text, voice, speed, model) {
+    return crypto
+        .createHash('md5')
+        .update(`${text}|${voice}|${speed}|${model}`)
+        .digest('hex');
+}
 
 /**
  * Convert text to speech using OpenAI TTS API.
@@ -17,6 +35,12 @@ async function synthesize(text, voice = config.ttsDefaultVoice, speed = 1.0, mod
         throw new ValidationError('text is required');
     }
 
+    const cacheKey = generateCacheKey(text, voice, speed, model);
+    const cachedAudio = ttsCache.get(cacheKey);
+    if (cachedAudio) {
+        return cachedAudio;
+    }
+
     try {
         const response = await openai.audio.speech.create({
             model: model,
@@ -27,7 +51,10 @@ async function synthesize(text, voice = config.ttsDefaultVoice, speed = 1.0, mod
         });
 
         const arrayBuffer = await response.arrayBuffer();
-        return Buffer.from(arrayBuffer);
+        const buffer = Buffer.from(arrayBuffer);
+
+        ttsCache.set(cacheKey, buffer);
+        return buffer;
     } catch (error) {
         console.error('TTS Synthesize Error:', error);
         throw new AppError('Failed to synthesize speech', 503);
@@ -45,17 +72,29 @@ async function semanticChunk(markdown) {
         throw new ValidationError('markdown is required');
     }
 
+    // 1. Pre-process obvious LaTeX to ease the GPT chunking burden
+    let processedText = markdown
+        .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1 over $2') // \frac{a}{b} -> a over b
+        .replace(/\\sum/g, 'sum')
+        .replace(/\\int/g, 'integral')
+        .replace(/\\partial/g, 'partial derivative ')
+        .replace(/\\rightarrow/g, 'implies')
+        .replace(/\\alpha/g, 'alpha')
+        .replace(/\\beta/g, 'beta')
+        .replace(/\\theta/g, 'theta')
+        .replace(/=/g, ' equals ');
+
     try {
-        // Use GPT to convert LaTeX and structure into natural speech chunks
+        // Use GPT to convert remaining LaTeX and structure into natural speech chunks
         const response = await openai.chat.completions.create({
             model: 'gpt-4o',
             messages: [
                 {
                     role: 'system',
                     content:
-                        'You are a preprocessor for a text-to-speech engine. Convert the given Markdown text into an array of speakable chunks. Convert any LaTeX formulas into natural language pronunciation (e.g., "partial derivative of f with respect to x"). Each chunk should be a natural sentence or phrase. Output as a JSON array of strings.',
+                        'You are a preprocessor for a text-to-speech engine. Convert the given Markdown text into an array of speakable chunks. Convert any remaining LaTeX formulas into natural language pronunciation. Each chunk should be a natural sentence or phrase. Output as a JSON array of strings.',
                 },
-                { role: 'user', content: markdown },
+                { role: 'user', content: processedText },
             ],
             temperature: 0.2,
             response_format: { type: 'json_object' },
@@ -90,11 +129,13 @@ async function synthesizeAll(markdown, voice = config.ttsDefaultVoice, speed = 1
         throw new ValidationError('No speakable text found');
     }
 
-    const audioBuffers = [];
-    for (const chunk of chunks) {
-        const audioBuffer = await synthesize(chunk, voice, speed, model);
-        audioBuffers.push(audioBuffer);
-    }
+    // Limit concurrency to 5 parallel synthesis requests to prevent OpenAI rate limiting
+    const limit = pLimit(5);
+    const synthesisPromises = chunks.map((chunk) =>
+        limit(() => synthesize(chunk, voice, speed, model))
+    );
+
+    const audioBuffers = await Promise.all(synthesisPromises);
 
     return Buffer.concat(audioBuffers);
 }
