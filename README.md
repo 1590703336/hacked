@@ -41,9 +41,23 @@ Designed specifically for students facing cognitive overload, dyslexia, ADHD, or
     *   **Concrete Explanations (TTS Reply):** The AI uses the current context to generate a relatable, real-world analogy and speaks it back. (e.g., *"Imagine you want to know if apples from three different farms have different sweetness levels because of the soil, or if it's just random variation among individual apples..."*)
     *   **Seamless Resume:** Once the question is answered, the system automatically resumes reading the original text from where it was paused.
 
-## 💻 Required Tech Stack
-Following our development guidelines, we must use the following technologies for web applications:
-1. **Desktop App / Backend**: **Rust / Tauri**
-2. **Core UI**: **React** (HTML for structure and JavaScript/TypeScript for logic).
-3. **Styling**: **Vanilla CSS** for maximum flexibility and control. *(TailwindCSS should be avoided unless explicitly requested, in which case the version must be confirmed first).*
-4. **Web Application Framework**: If a more complex standalone web app is eventually specified, we will use a framework like **Next.js** or **Vite** (initialized via `npx`).
+## 💻 Tech Stack
+
+| Layer | Technology |
+|---|---|
+| **Desktop Shell** | Electron |
+| **Backend** | Node.js + Express |
+| **Frontend** | React + Vite |
+| **Styling** | TailwindCSS v4 |
+| **OCR / Vision** | Google Gemini 3 Flash / OpenAI GPT-4o |
+| **TTS** | OpenAI TTS API |
+| **STT** | OpenAI Whisper API |
+| **Build / Package** | electron-builder |
+
+### Project Structure
+```
+hacked/
+├── backend/        # Node.js + Express API server (modular)
+├── frontend/       # React + Vite + TailwindCSS
+└── electron/       # Electron main process shell
+```

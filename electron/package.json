@@ -1,0 +1,36 @@
+{
+    "name": "hacked-electron",
+    "version": "1.0.0",
+    "description": "AI-Driven Digital Accessibility Learning Assistant - Electron Shell",
+    "main": "main.js",
+    "scripts": {
+        "start": "electron .",
+        "dev": "electron ."
+    },
+    "dependencies": {
+        "electron": "^35.0.0"
+    },
+    "devDependencies": {
+        "electron-builder": "^25.1.8"
+    },
+    "build": {
+        "appId": "com.hacked.accessibility-tutor",
+        "productName": "AccessibilityTutor",
+        "directories": {
+            "output": "dist"
+        },
+        "files": [
+            "main.js",
+            "preload.js"
+        ],
+        "mac": {
+            "target": "dmg"
+        },
+        "win": {
+            "target": "nsis"
+        },
+        "linux": {
+            "target": "AppImage"
+        }
+    }
+}
