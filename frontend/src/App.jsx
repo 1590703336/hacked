@@ -31,6 +31,11 @@ export default function App() {
   const [whisperTestMeta, setWhisperTestMeta] = useState(null);
   const [whisperTestHasPlayback, setWhisperTestHasPlayback] = useState(false);
   const [whisperTestPlaying, setWhisperTestPlaying] = useState(false);
+  const [audioInputs, setAudioInputs] = useState([]);
+  const [selectedAudioInputId, setSelectedAudioInputId] = useState("");
+  const [micLevel, setMicLevel] = useState(0);
+  const [micPeak, setMicPeak] = useState(0);
+  const OCR_CONCURRENCY = 3;
 
   const eventSourceRef = useRef(null);
   const audioQueueRef = useRef([]);
@@ -51,7 +56,13 @@ export default function App() {
   const whisperTestStartedAtRef = useRef(0);
   const whisperTestPlaybackAudioRef = useRef(null);
   const whisperTestPlaybackUrlRef = useRef("");
+  const whisperTestMonitorAudioContextRef = useRef(null);
+  const whisperTestMonitorAnalyserRef = useRef(null);
+  const whisperTestMonitorSourceRef = useRef(null);
+  const whisperTestMonitorTimerRef = useRef(null);
+  const whisperTestPeakRef = useRef(0);
   const tutorStartedAtRef = useRef(0);
+  const unmountCleanupRef = useRef(() => {});
 
   const closeStream = () => {
     if (eventSourceRef.current) {
@@ -322,9 +333,9 @@ export default function App() {
     setTutorMessages((prev) => [...prev, { role, text }]);
   };
 
-  const transcribeAudioBlob = async (audioBlob) => {
+  const transcribeAudioBlob = async (audioBlob, fileName = "question.webm") => {
     const formData = new FormData();
-    formData.append("audio", audioBlob, "question.webm");
+    formData.append("audio", audioBlob, fileName);
     const transcribeRes = await fetch("/api/tutor/transcribe", {
       method: "POST",
       body: formData,
@@ -335,6 +346,10 @@ export default function App() {
     }
     return transcribeData.data?.text?.trim() || "";
   };
+
+  const getAudioFileName = (mimeType) => (
+    mimeType && mimeType.includes("mp4") ? "question.m4a" : "question.webm"
+  );
 
   const pickAudioMimeType = () => {
     if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
@@ -348,6 +363,98 @@ export default function App() {
     return candidates.find((mime) => MediaRecorder.isTypeSupported(mime)) || "";
   };
 
+  const loadAudioInputDevices = async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices.filter((device) => device.kind === "audioinput");
+      setAudioInputs(inputs);
+      setSelectedAudioInputId((prev) => prev || inputs[0]?.deviceId || "");
+    } catch (err) {
+      console.error("Failed to enumerate audio devices:", err);
+    }
+  };
+
+  const stopWhisperTestMicMonitor = () => {
+    if (whisperTestMonitorTimerRef.current) {
+      clearInterval(whisperTestMonitorTimerRef.current);
+      whisperTestMonitorTimerRef.current = null;
+    }
+    if (whisperTestMonitorSourceRef.current) {
+      whisperTestMonitorSourceRef.current.disconnect();
+      whisperTestMonitorSourceRef.current = null;
+    }
+    if (whisperTestMonitorAnalyserRef.current) {
+      whisperTestMonitorAnalyserRef.current.disconnect();
+      whisperTestMonitorAnalyserRef.current = null;
+    }
+    if (whisperTestMonitorAudioContextRef.current) {
+      whisperTestMonitorAudioContextRef.current.close().catch(() => {});
+      whisperTestMonitorAudioContextRef.current = null;
+    }
+    setMicLevel(0);
+  };
+
+  const startWhisperTestMicMonitor = (stream) => {
+    stopWhisperTestMicMonitor();
+    try {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor) return;
+      const ctx = new AudioContextCtor();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.15;
+      source.connect(analyser);
+      const data = new Uint8Array(analyser.fftSize);
+
+      whisperTestMonitorAudioContextRef.current = ctx;
+      whisperTestMonitorSourceRef.current = source;
+      whisperTestMonitorAnalyserRef.current = analyser;
+
+      whisperTestMonitorTimerRef.current = setInterval(() => {
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+          const centered = (data[i] - 128) / 128;
+          sum += centered * centered;
+        }
+        const rms = Math.sqrt(sum / data.length);
+        const normalized = Math.min(1, rms * 6);
+        setMicLevel(normalized);
+        whisperTestPeakRef.current = Math.max(whisperTestPeakRef.current, normalized);
+        setMicPeak((prev) => Math.max(prev, normalized));
+      }, 120);
+    } catch (err) {
+      console.error("Mic monitor setup failed:", err);
+    }
+  };
+
+  const playSpeakerTestTone = () => {
+    try {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor) throw new Error("AudioContext unsupported");
+      const ctx = new AudioContextCtor();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = 440;
+      gain.gain.value = 0.0001;
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+      oscillator.stop(ctx.currentTime + 0.42);
+      oscillator.onended = () => {
+        ctx.close().catch(() => {});
+      };
+    } catch (err) {
+      console.error(err);
+      setWhisperTestError("Could not play speaker test tone");
+    }
+  };
+
   const buildRecorder = (stream) => {
     const mimeType = pickAudioMimeType();
     if (mimeType) {
@@ -357,6 +464,7 @@ export default function App() {
   };
 
   const releaseWhisperTestRecorder = () => {
+    stopWhisperTestMicMonitor();
     if (whisperTestRecorderRef.current) {
       whisperTestRecorderRef.current.ondataavailable = null;
       whisperTestRecorderRef.current.onstop = null;
@@ -381,12 +489,28 @@ export default function App() {
       setWhisperTestError(null);
       setWhisperTestMeta(null);
       stopTutorAnswerAudio();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setMicLevel(0);
+      setMicPeak(0);
+      whisperTestPeakRef.current = 0;
+
+      const audioConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 1,
+      };
+      if (selectedAudioInputId) {
+        audioConstraints.deviceId = { exact: selectedAudioInputId };
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
       whisperTestStreamRef.current = stream;
       const recorder = buildRecorder(stream);
       whisperTestRecorderRef.current = recorder;
       whisperTestChunksRef.current = [];
       whisperTestStartedAtRef.current = Date.now();
+      startWhisperTestMicMonitor(stream);
+      loadAudioInputDevices();
 
       recorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
@@ -407,9 +531,12 @@ export default function App() {
           bytes: audioBlob.size,
           durationMs,
           mimeType: recorder.mimeType || "audio/webm",
+          inputDevice: stream.getAudioTracks()[0]?.label || "(unknown input)",
+          peak: whisperTestPeakRef.current,
         });
-        if (audioBlob.size < 4096 || durationMs < 900) {
-          setWhisperTestError(`Recording too short or silent (${audioBlob.size} bytes, ${Math.round(durationMs)} ms). Speak for 1-2 seconds and check microphone input.`);
+        const likelySilent = whisperTestPeakRef.current < 0.02;
+        if (likelySilent || durationMs < 900 || audioBlob.size < 1500) {
+          setWhisperTestError(`Recording too short or silent (${audioBlob.size} bytes, ${Math.round(durationMs)} ms, peak ${whisperTestPeakRef.current.toFixed(3)}). Check mic device and OS input level.`);
           setWhisperTestText("(empty)");
           setWhisperTestHistory((prev) => [
             {
@@ -418,6 +545,8 @@ export default function App() {
               bytes: audioBlob.size,
               durationMs,
               mimeType: recorder.mimeType || "audio/webm",
+              inputDevice: stream.getAudioTracks()[0]?.label || "(unknown input)",
+              peak: whisperTestPeakRef.current,
             },
             ...prev,
           ]);
@@ -425,7 +554,7 @@ export default function App() {
         }
         try {
           setWhisperTestTranscribing(true);
-          const text = await transcribeAudioBlob(audioBlob);
+          const text = await transcribeAudioBlob(audioBlob, getAudioFileName(recorder.mimeType || ""));
           setWhisperTestText(text || "(empty)");
           setWhisperTestHistory((prev) => [
             {
@@ -434,6 +563,8 @@ export default function App() {
               bytes: audioBlob.size,
               durationMs,
               mimeType: recorder.mimeType || "audio/webm",
+              inputDevice: stream.getAudioTracks()[0]?.label || "(unknown input)",
+              peak: whisperTestPeakRef.current,
             },
             ...prev,
           ]);
@@ -557,7 +688,7 @@ export default function App() {
         }
         try {
           setIsTranscribing(true);
-          const questionText = await transcribeAudioBlob(audioBlob);
+          const questionText = await transcribeAudioBlob(audioBlob, getAudioFileName(recorder.mimeType || ""));
           setIsTranscribing(false);
           if (!questionText) {
             setTutorError("Could not detect speech. Please try again.");
@@ -597,6 +728,15 @@ export default function App() {
   }, [isReading]);
 
   useEffect(() => {
+    unmountCleanupRef.current = () => {
+      stopTutorAnswerAudio();
+      releaseRecorder();
+      releaseWhisperTestRecorder();
+      clearWhisperTestPlayback();
+    };
+  });
+
+  useEffect(() => {
     const onKeyDown = (event) => {
       const targetTag = event.target?.tagName;
       const isEditable =
@@ -620,12 +760,25 @@ export default function App() {
         currentAudioRef.current.pause();
         currentAudioRef.current.src = "";
       }
-      stopTutorAnswerAudio();
-      releaseRecorder();
-      releaseWhisperTestRecorder();
-      clearWhisperTestPlayback();
+      unmountCleanupRef.current();
     };
   }, []);
+
+  useEffect(() => {
+    if (activePage !== "whisper-test") return;
+    loadAudioInputDevices();
+    const onDeviceChange = () => {
+      loadAudioInputDevices();
+    };
+    if (navigator.mediaDevices?.addEventListener) {
+      navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
+    }
+    return () => {
+      if (navigator.mediaDevices?.removeEventListener) {
+        navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
+      }
+    };
+  }, [activePage]);
 
   const handleUpload = async () => {
     if (!file) return;
@@ -670,10 +823,12 @@ export default function App() {
 
       setProcessedImages(images);
 
-      // 2. OCR API for each image
-      let combinedText = "";
-      for (let i = 0; i < images.length; i++) {
-        const base64Image = images[i];
+      // 2. OCR API (concurrent workers, ordered output)
+      const segments = new Array(images.length);
+      let nextImageIndex = 0;
+
+      const processOneImage = async (index) => {
+        const base64Image = images[index];
         const ocrRes = await fetch("/api/ocr", {
           method: "POST",
           headers: {
@@ -684,19 +839,38 @@ export default function App() {
 
         const ocrData = await ocrRes.json();
         if (!ocrData.success) {
-          throw new Error(ocrData.message || `OCR API failed on image ${i + 1}`);
+          throw new Error(ocrData.message || `OCR API failed on image ${index + 1}`);
         }
 
+        let segment = "";
         if (images.length > 1) {
-          combinedText += `--- Image ${i + 1} ---\n`;
+          segment += `--- Image ${index + 1} ---\n`;
         }
         if (ocrData.data.noTextDetected) {
-          combinedText += "No text detected.\n\n";
+          segment += "No text detected.\n\n";
         } else {
-          combinedText += ocrData.data.markdown + "\n\n";
+          segment += `${ocrData.data.markdown}\n\n`;
         }
-      }
+        segments[index] = segment;
+      };
 
+      const worker = async () => {
+        while (true) {
+          const current = nextImageIndex;
+          nextImageIndex += 1;
+          if (current >= images.length) {
+            return;
+          }
+          await processOneImage(current);
+        }
+      };
+
+      const workers = Array.from(
+        { length: Math.min(OCR_CONCURRENCY, images.length) },
+        () => worker(),
+      );
+      await Promise.all(workers);
+      const combinedText = segments.join("");
       setResultText(combinedText);
     } catch (err) {
       console.error(err);
@@ -817,6 +991,9 @@ export default function App() {
               setWhisperTestError(null);
               setWhisperTestHistory([]);
               setWhisperTestMeta(null);
+              setMicLevel(0);
+              setMicPeak(0);
+              whisperTestPeakRef.current = 0;
               clearWhisperTestPlayback();
             }}
             style={{
@@ -846,6 +1023,61 @@ export default function App() {
           >
             {whisperTestPlaying ? "Stop Playback" : "Play Local Recording"}
           </button>
+          <button
+            onClick={playSpeakerTestTone}
+            style={{
+              padding: "0.6rem 1rem",
+              borderRadius: "8px",
+              border: "1px solid #3c5268",
+              color: "#d3dfeb",
+              backgroundColor: "#1b2938",
+              fontWeight: "bold",
+            }}
+          >
+            Speaker Test Tone
+          </button>
+        </div>
+
+        <div style={{ marginBottom: "0.9rem" }}>
+          <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.45rem" }}>Microphone Device</div>
+          <select
+            value={selectedAudioInputId}
+            onChange={(e) => setSelectedAudioInputId(e.target.value)}
+            disabled={whisperTestRecording}
+            style={{
+              width: "100%",
+              padding: "0.55rem 0.65rem",
+              borderRadius: "8px",
+              border: "1px solid #3c5268",
+              backgroundColor: "#14202d",
+              color: "#d3dfeb",
+            }}
+          >
+            {audioInputs.length === 0 && (
+              <option value="">No microphone found</option>
+            )}
+            {audioInputs.map((device, idx) => (
+              <option key={device.deviceId || `device-${idx}`} value={device.deviceId}>
+                {device.label || `Microphone ${idx + 1}`}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ marginBottom: "0.9rem" }}>
+          <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.35rem" }}>
+            Mic Input Level (live while recording): current {micLevel.toFixed(3)} · peak {micPeak.toFixed(3)}
+          </div>
+          <div style={{ height: "10px", borderRadius: "999px", backgroundColor: "#172334", overflow: "hidden", border: "1px solid #2d3d52" }}>
+            <div
+              style={{
+                width: `${Math.max(2, Math.round(micLevel * 100))}%`,
+                height: "100%",
+                background: "linear-gradient(90deg, #3ef07a, #fcba03, #ff7c3e)",
+                transition: "width 120ms linear",
+              }}
+            />
+          </div>
         </div>
 
         {(whisperTestRecording || whisperTestTranscribing) && (
@@ -856,7 +1088,7 @@ export default function App() {
 
         {whisperTestMeta && (
           <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.8rem" }}>
-            Last audio: {whisperTestMeta.bytes} bytes · {Math.round(whisperTestMeta.durationMs)} ms · {whisperTestMeta.mimeType}
+            Last audio: {whisperTestMeta.bytes} bytes · {Math.round(whisperTestMeta.durationMs)} ms · {whisperTestMeta.mimeType} · peak {whisperTestMeta.peak?.toFixed(3)} · {whisperTestMeta.inputDevice}
           </div>
         )}
 
@@ -882,8 +1114,9 @@ export default function App() {
             {whisperTestHistory.map((item, idx) => (
               <div key={`${item.timestamp}-${idx}`} style={{ backgroundColor: "#182433", border: "1px solid #2b3a4d", borderRadius: "8px", padding: "0.7rem" }}>
                 <div style={{ color: "#7f97b0", fontSize: "0.72rem", marginBottom: "0.2rem" }}>
-                  {new Date(item.timestamp).toLocaleString()} · {item.bytes} bytes · {Math.round(item.durationMs || 0)} ms · {item.mimeType || "unknown"}
+                  {new Date(item.timestamp).toLocaleString()} · {item.bytes} bytes · {Math.round(item.durationMs || 0)} ms · {item.mimeType || "unknown"} · peak {(item.peak || 0).toFixed(3)}
                 </div>
+                <div style={{ color: "#7f97b0", fontSize: "0.72rem", marginBottom: "0.2rem" }}>{item.inputDevice || "(unknown input)"}</div>
                 <div style={{ color: "#e8f0f8", whiteSpace: "pre-wrap" }}>{item.text}</div>
               </div>
             ))}
