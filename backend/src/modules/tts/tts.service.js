@@ -38,7 +38,8 @@ const chunkCache = new LRUCache({
 });
 
 const kokoroModelCache = new Map();
-const ttsInferenceLimit = pLimit(Math.max(1, Number(config.ttsInferenceConcurrency) || 2));
+const streamInferenceLimit = pLimit(Math.max(1, Number(config.ttsInferenceConcurrency) || 2));
+const interactiveInferenceLimit = pLimit(Math.max(1, Number(config.ttsInteractiveInferenceConcurrency) || 1));
 let prewarmPromise = null;
 
 function perfLog(message) {
@@ -255,20 +256,14 @@ async function synthesizeRawAudio(text, voice = config.ttsDefaultVoice, speed = 
         const kokoro = await getKokoro(modelId);
         const resolvedVoice = resolveVoiceForModel(kokoro, voice);
         const resolvedSpeed = normalizeSpeed(speed);
-        const queuedAt = Date.now();
-        let inferenceStartedAt = queuedAt;
-
-        const rawAudio = await ttsInferenceLimit(async () => {
-            inferenceStartedAt = Date.now();
-            return kokoro.generate(text, {
-                voice: resolvedVoice,
-                speed: resolvedSpeed,
-            });
+        const rawAudio = await kokoro.generate(text, {
+            voice: resolvedVoice,
+            speed: resolvedSpeed,
         });
 
         return {
             rawAudio,
-            inferenceQueueWaitMs: Math.max(0, inferenceStartedAt - queuedAt),
+            inferenceQueueWaitMs: 0,
             voice: resolvedVoice,
             model: modelId,
             speed: resolvedSpeed,
@@ -282,16 +277,27 @@ async function synthesizeRawAudio(text, voice = config.ttsDefaultVoice, speed = 
     }
 }
 
+function pickInferenceLimiter(lane = 'interactive') {
+    return lane === 'stream' ? streamInferenceLimit : interactiveInferenceLimit;
+}
+
 async function synthesize(text, voice = config.ttsDefaultVoice, speed = 1.0, model = config.ttsModel) {
     const { audioBuffer } = await synthesizeWithMeta(text, voice, speed, model);
     return audioBuffer;
 }
 
-async function synthesizeWithMeta(text, voice = config.ttsDefaultVoice, speed = 1.0, model = config.ttsModel) {
+async function synthesizeWithMeta(
+    text,
+    voice = config.ttsDefaultVoice,
+    speed = 1.0,
+    model = config.ttsModel,
+    options = {}
+) {
     const startedAt = Date.now();
     if (!text) {
         throw new ValidationError('text is required');
     }
+    const lane = options?.lane || 'interactive';
 
     const normalizedVoice = normalizeVoice(voice);
     const normalizedSpeed = normalizeSpeed(speed);
@@ -316,8 +322,15 @@ async function synthesizeWithMeta(text, voice = config.ttsDefaultVoice, speed = 
     }
 
     const synthStartedAt = Date.now();
-    const synthResult = await synthesizeRawAudio(text, normalizedVoice, normalizedSpeed, normalizedModel);
+    const limiter = pickInferenceLimiter(lane);
+    const queuedAt = Date.now();
+    let inferenceStartedAt = queuedAt;
+    const synthResult = await limiter(async () => {
+        inferenceStartedAt = Date.now();
+        return synthesizeRawAudio(text, normalizedVoice, normalizedSpeed, normalizedModel);
+    });
     const synthMs = Date.now() - synthStartedAt;
+    const queueWaitMs = Math.max(0, inferenceStartedAt - queuedAt);
 
     const encodeStartedAt = Date.now();
     const wavBuffer = rawAudioToWavBuffer(synthResult.rawAudio);
@@ -332,7 +345,7 @@ async function synthesizeWithMeta(text, voice = config.ttsDefaultVoice, speed = 
             totalMs: Date.now() - startedAt,
             synthMs,
             encodeMs,
-            inferenceQueueWaitMs: synthResult.inferenceQueueWaitMs,
+            inferenceQueueWaitMs: queueWaitMs + synthResult.inferenceQueueWaitMs,
             voice: synthResult.voice,
             model: synthResult.model,
             speed: synthResult.speed,

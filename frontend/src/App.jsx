@@ -42,6 +42,8 @@ export default function App() {
   const TTS_SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0];
 
   const eventSourceRef = useRef(null);
+  const streamSessionIdRef = useRef("");
+  const streamPausedOnServerRef = useRef(false);
   const audioQueueRef = useRef([]);
   const currentAudioRef = useRef(null);
   const isPlayingRef = useRef(false);
@@ -92,6 +94,25 @@ export default function App() {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
+  };
+
+  const makeStreamId = () => {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `tts-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  };
+
+  const sendStreamControl = (action) => {
+    const streamId = streamSessionIdRef.current;
+    if (!streamId) return;
+    fetch("/api/tts/stream/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId, action }),
+    }).catch((err) => {
+      console.error(`Failed to send stream ${action}:`, err);
+    });
   };
 
   const stopTutorAnswerAudio = () => {
@@ -176,8 +197,13 @@ export default function App() {
   };
 
   const stopReading = () => {
+    if (streamSessionIdRef.current) {
+      sendStreamControl("stop");
+    }
     streamDoneRef.current = true;
     closeStream();
+    streamSessionIdRef.current = "";
+    streamPausedOnServerRef.current = false;
     clearAudio();
     isPausedRef.current = false;
     setIsReading(false);
@@ -190,6 +216,10 @@ export default function App() {
     if (!isReading) return;
     isPausedRef.current = true;
     setIsPaused(true);
+    if (!streamPausedOnServerRef.current) {
+      streamPausedOnServerRef.current = true;
+      sendStreamControl("pause");
+    }
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
     }
@@ -198,6 +228,10 @@ export default function App() {
   const resumeReading = () => {
     if (!isReading) return;
     stopTutorAnswerAudio();
+    if (streamPausedOnServerRef.current) {
+      streamPausedOnServerRef.current = false;
+      sendStreamControl("resume");
+    }
     isPausedRef.current = false;
     setIsPaused(false);
     if (currentAudioRef.current) {
@@ -259,6 +293,48 @@ export default function App() {
     });
   };
 
+  const handleTtsStreamPayload = (payload) => {
+    if (payload.type === "metadata") {
+      setTtsChunkCount(payload.chunkCount || 0);
+      if (typeof payload.streamId === "string" && payload.streamId.length > 0) {
+        streamSessionIdRef.current = payload.streamId;
+      }
+      if (typeof payload.mimeType === "string" && payload.mimeType.length > 0) {
+        ttsMimeTypeRef.current = payload.mimeType;
+      }
+      return;
+    }
+
+    if (payload.type === "audio") {
+      setTtsChunks((prev) => {
+        const next = [...prev];
+        next[payload.chunkIndex] = payload.text || "";
+        return next;
+      });
+
+      audioQueueRef.current.push(payload);
+      playNextChunk();
+      return;
+    }
+
+    if (payload.type === "error") {
+      setTtsError(payload.message || "Failed to synthesize one chunk");
+      return;
+    }
+
+    if (payload.type === "done") {
+      streamDoneRef.current = true;
+      closeStream();
+      streamSessionIdRef.current = "";
+      streamPausedOnServerRef.current = false;
+      if (!isPlayingRef.current && audioQueueRef.current.length === 0) {
+        setIsReading(false);
+        setCurrentChunkIndex(null);
+        setReadingTarget(null);
+      }
+    }
+  };
+
   const startReading = (textToRead, target) => {
     if (!textToRead || typeof textToRead !== "string" || textToRead.trim().length === 0) return;
     if (isReading && readingTarget === target) return;
@@ -275,70 +351,91 @@ export default function App() {
     setTtsSourceLabel(target === "summary" ? "Summary" : "OCR Result");
     streamDoneRef.current = false;
     ttsMimeTypeRef.current = "audio/wav";
+    streamPausedOnServerRef.current = false;
 
-    const params = new URLSearchParams({
-      markdown: textToRead,
-      speed: String(ttsSpeed),
-    });
-    const stream = new EventSource(`/api/tts/stream?${params.toString()}`);
-    eventSourceRef.current = stream;
+    const streamId = makeStreamId();
+    streamSessionIdRef.current = streamId;
+    const abortController = new AbortController();
+    eventSourceRef.current = {
+      close: () => abortController.abort(),
+    };
     setIsReading(true);
 
-    stream.onmessage = (event) => {
-      let payload;
+    (async () => {
       try {
-        payload = JSON.parse(event.data);
-      } catch (parseError) {
-        console.error("Invalid SSE payload:", parseError, event.data);
-        return;
-      }
-
-      if (payload.type === "metadata") {
-        setTtsChunkCount(payload.chunkCount || 0);
-        if (typeof payload.mimeType === "string" && payload.mimeType.length > 0) {
-          ttsMimeTypeRef.current = payload.mimeType;
-        }
-        return;
-      }
-
-      if (payload.type === "audio") {
-        setTtsChunks((prev) => {
-          const next = [...prev];
-          next[payload.chunkIndex] = payload.text || "";
-          return next;
+        const res = await fetch("/api/tts/stream", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            streamId,
+            markdown: textToRead,
+            speed: String(ttsSpeed),
+          }),
+          signal: abortController.signal,
         });
 
-        audioQueueRef.current.push(payload);
-        playNextChunk();
-        return;
-      }
+        if (!res.ok) {
+          const fallback = await res.text().catch(() => "");
+          throw new Error(`TTS stream failed: ${fallback || res.status}`);
+        }
 
-      if (payload.type === "error") {
-        setTtsError(payload.message || "Failed to synthesize one chunk");
-        return;
-      }
+        if (!res.body) {
+          throw new Error("TTS stream unavailable");
+        }
 
-      if (payload.type === "done") {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true }).replace(/\r/g, "");
+
+          let boundaryIndex = sseBuffer.indexOf("\n\n");
+          while (boundaryIndex !== -1) {
+            const eventBlock = sseBuffer.slice(0, boundaryIndex).trim();
+            sseBuffer = sseBuffer.slice(boundaryIndex + 2);
+
+            if (eventBlock) {
+              const dataLines = eventBlock
+                .split("\n")
+                .filter((line) => line.startsWith("data:"))
+                .map((line) => line.slice(5).trim());
+
+              if (dataLines.length > 0) {
+                const rawPayload = dataLines.join("\n");
+                try {
+                  const payload = JSON.parse(rawPayload);
+                  handleTtsStreamPayload(payload);
+                } catch (parseError) {
+                  console.error("Invalid SSE payload:", parseError, rawPayload);
+                }
+              }
+            }
+
+            boundaryIndex = sseBuffer.indexOf("\n\n");
+          }
+        }
+      } catch (err) {
+        if (err.name === "AbortError") {
+          return;
+        }
+        console.error("TTS stream failed:", err);
         streamDoneRef.current = true;
         closeStream();
+        streamSessionIdRef.current = "";
+        streamPausedOnServerRef.current = false;
+        setTtsError("TTS stream connection dropped");
         if (!isPlayingRef.current && audioQueueRef.current.length === 0) {
           setIsReading(false);
           setCurrentChunkIndex(null);
           setReadingTarget(null);
         }
       }
-    };
-
-    stream.onerror = () => {
-      streamDoneRef.current = true;
-      closeStream();
-      setTtsError("TTS stream connection dropped");
-      if (!isPlayingRef.current && audioQueueRef.current.length === 0) {
-        setIsReading(false);
-        setCurrentChunkIndex(null);
-        setReadingTarget(null);
-      }
-    };
+    })();
   };
 
   const getSummaryReadableText = (summaryInput = summaryText) => {
@@ -660,7 +757,7 @@ export default function App() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text: answerText, speed: ttsSpeed }),
+      body: JSON.stringify({ text: answerText, speed: ttsSpeed, priority: "interactive" }),
     });
     if (!ttsRes.ok) {
       const fallback = await ttsRes.text();
@@ -813,9 +910,7 @@ export default function App() {
 
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
+      closeStream();
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
         currentAudioRef.current.src = "";

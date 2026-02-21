@@ -56,17 +56,35 @@ function validatePipeline(req, _res, next) {
 }
 
 function validateStream(req, _res, next) {
-    const { markdown } = req.query;
+    const source = req.method === 'GET' ? req.query : req.body;
+    const { markdown, streamId } = source;
 
     if (!markdown || typeof markdown !== 'string' || markdown.trim().length === 0) {
         return next(new ValidationError('markdown is required and must be a non-empty string'));
     }
 
-    // Pass req.query for SSE option validation
-    if (validateTTSOptions(req.query, next) === true) {
+    if (streamId !== undefined && (typeof streamId !== 'string' || streamId.trim().length === 0)) {
+        return next(new ValidationError('streamId must be a non-empty string when provided'));
+    }
+
+    if (validateTTSOptions(source, next) === true) {
         next();
     }
 }
 
-module.exports = { validateSynthesize, validateChunk, validatePipeline, validateStream };
+function validateStreamControl(req, _res, next) {
+    const { streamId, action } = req.body || {};
 
+    if (!streamId || typeof streamId !== 'string' || streamId.trim().length === 0) {
+        return next(new ValidationError('streamId is required and must be a non-empty string'));
+    }
+
+    const validActions = ['pause', 'resume', 'stop'];
+    if (!validActions.includes(action)) {
+        return next(new ValidationError(`action must be one of: ${validActions.join(', ')}`));
+    }
+
+    next();
+}
+
+module.exports = { validateSynthesize, validateChunk, validatePipeline, validateStream, validateStreamControl };

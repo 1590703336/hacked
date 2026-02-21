@@ -13,8 +13,9 @@ module.exports = {
     ttsDefaultVoice: process.env.TTS_DEFAULT_VOICE || 'af_nova',
     ttsDevice: process.env.TTS_DEVICE || 'cpu',
     ttsDtype: process.env.TTS_DTYPE || 'q8',
-    ttsChunkConcurrency: parseInt(process.env.TTS_CHUNK_CONCURRENCY, 10) || 3,
-    ttsInferenceConcurrency: parseInt(process.env.TTS_INFERENCE_CONCURRENCY, 10) || 2,
+    ttsChunkConcurrency: parseInt(process.env.TTS_CHUNK_CONCURRENCY, 10) || 1,
+    ttsInferenceConcurrency: parseInt(process.env.TTS_INFERENCE_CONCURRENCY, 10) || 1,
+    ttsInteractiveInferenceConcurrency: parseInt(process.env.TTS_INTERACTIVE_INFERENCE_CONCURRENCY, 10) || 1,
     ttsRetryAttempts: parseInt(process.env.TTS_RETRY_ATTEMPTS, 10) || 2,
     ttsPrewarm: process.env.TTS_PREWARM !== 'false',
 

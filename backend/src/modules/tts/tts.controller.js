@@ -1,9 +1,9 @@
-const pLimit = require('p-limit');
 const config = require('../../config');
 const ttsService = require('./tts.service');
 
 const DEFAULT_STREAM_RETRIES = 2;
 const DEFAULT_STREAM_CONCURRENCY = 3;
+const streamStates = new Map();
 
 function perfLog(message) {
     if (config.enablePerfLogs) {
@@ -15,12 +15,39 @@ function makeReqId(prefix = 'tts') {
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function createStreamState() {
+    return {
+        paused: false,
+        stopped: false,
+        waiters: new Set(),
+    };
+}
+
+function wakeStreamWaiters(state) {
+    for (const resolve of state.waiters) {
+        resolve();
+    }
+    state.waiters.clear();
+}
+
+async function waitIfPaused(state) {
+    while (state.paused && !state.stopped) {
+        await new Promise((resolve) => state.waiters.add(resolve));
+    }
+}
+
 async function synthesize(req, res, next) {
     try {
         const reqId = makeReqId('tts-single');
         const startedAt = Date.now();
         const { text, voice, speed, model } = req.body;
-        const { audioBuffer, meta } = await ttsService.synthesizeWithMeta(text, voice, speed, model);
+        const { audioBuffer, meta } = await ttsService.synthesizeWithMeta(
+            text,
+            voice,
+            speed,
+            model,
+            { lane: 'interactive' }
+        );
 
         res.set({
             'Content-Type': ttsService.outputMimeType,
@@ -58,24 +85,77 @@ async function pipeline(req, res, next) {
     }
 }
 
-async function streamChunks(req, res, next) {
+async function controlStream(req, res, next) {
     try {
-        const reqId = makeReqId('tts-stream');
-        const requestStartedAt = Date.now();
-        // SSE expects GET request params
-        const { markdown, voice, speed, model } = req.query;
-        const parsedSpeed = speed ? parseFloat(speed) : undefined;
-        const retryAttempts = Math.max(1, Number(config.ttsRetryAttempts) || DEFAULT_STREAM_RETRIES);
-        const streamConcurrency = Math.max(1, Number(config.ttsChunkConcurrency) || DEFAULT_STREAM_CONCURRENCY);
+        const { streamId, action } = req.body;
+        const state = streamStates.get(streamId);
+        if (!state) {
+            return res.status(404).json({
+                success: false,
+                error: 'NotFoundError',
+                message: `streamId "${streamId}" not found`,
+            });
+        }
 
+        if (action === 'pause') {
+            state.paused = true;
+        } else if (action === 'resume') {
+            state.paused = false;
+            wakeStreamWaiters(state);
+        } else if (action === 'stop') {
+            state.stopped = true;
+            state.paused = false;
+            wakeStreamWaiters(state);
+        }
+
+        return res.json({
+            success: true,
+            data: {
+                streamId,
+                paused: state.paused,
+                stopped: state.stopped,
+            },
+        });
+    } catch (err) {
+        next(err);
+    }
+}
+
+async function streamChunks(req, res, next) {
+    const reqId = makeReqId('tts-stream');
+    const requestStartedAt = Date.now();
+    const source = req.method === 'GET' ? req.query : req.body;
+    const { markdown, voice, speed, model } = source;
+    const streamId = source.streamId || makeReqId('stream');
+    const parsedSpeed = speed ? parseFloat(speed) : undefined;
+    const retryAttempts = Math.max(1, Number(config.ttsRetryAttempts) || DEFAULT_STREAM_RETRIES);
+    const streamConcurrency = Math.max(1, Number(config.ttsChunkConcurrency) || DEFAULT_STREAM_CONCURRENCY);
+    const state = createStreamState();
+    streamStates.set(streamId, state);
+
+    let keepAliveInterval = null;
+    let streamClosed = false;
+    const closeStream = () => {
+        streamClosed = true;
+        if (keepAliveInterval) {
+            clearInterval(keepAliveInterval);
+            keepAliveInterval = null;
+        }
+        state.stopped = true;
+        state.paused = false;
+        wakeStreamWaiters(state);
+    };
+
+    try {
         if (!markdown) {
-            return res.status(400).json({ success: false, error: 'ValidationError', message: 'markdown query param is required' });
+            streamStates.delete(streamId);
+            return res.status(400).json({ success: false, error: 'ValidationError', message: 'markdown is required' });
         }
 
         const chunkingStartedAt = Date.now();
         const chunks = await ttsService.semanticChunk(markdown);
         const chunkingMs = Date.now() - chunkingStartedAt;
-        perfLog(`[TTS][stream][${reqId}] chunkingDone chunkCount=${chunks.length} chunkingMs=${chunkingMs} markdownChars=${markdown.length}`);
+        perfLog(`[TTS][stream][${reqId}] streamId=${streamId} chunkingDone chunkCount=${chunks.length} chunkingMs=${chunkingMs} markdownChars=${markdown.length} streamConcurrency=${streamConcurrency}`);
 
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
@@ -84,55 +164,64 @@ async function streamChunks(req, res, next) {
             'Access-Control-Allow-Origin': '*',
         });
 
-        // Send down chunk count metadata straight away
-        res.write(`data: ${JSON.stringify({ type: 'metadata', chunkCount: chunks.length, mimeType: ttsService.outputMimeType })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'metadata', streamId, chunkCount: chunks.length, mimeType: ttsService.outputMimeType })}\n\n`);
 
-        // Send a keepalive heartbeat every 15 seconds so long TTS generations don't drop the connection
-        const keepAliveInterval = setInterval(() => {
+        keepAliveInterval = setInterval(() => {
             res.write(': keepalive\n\n');
         }, 15000);
 
-        let streamClosed = false;
         res.on('close', () => {
-            streamClosed = true;
-            clearInterval(keepAliveInterval);
-        });
-
-        const limit = pLimit(streamConcurrency);
-        const chunkTasks = chunks.map((chunkText, chunkIndex) => {
-            const queuedAt = Date.now();
-            return limit(async () => {
-                const startedAt = Date.now();
-                const streamQueueWaitMs = startedAt - queuedAt;
-
-                for (let attempt = 1; attempt <= retryAttempts; attempt++) {
-                    try {
-                        const { audioBuffer, meta } = await ttsService.synthesizeWithMeta(chunkText, voice, parsedSpeed, model);
-                        return { success: true, chunkIndex, chunkText, audioBuffer, attempt, streamQueueWaitMs, meta };
-                    } catch (synthError) {
-                        console.error(`Error synthesizing chunk ${chunkIndex} (attempt ${attempt}/${retryAttempts}):`, synthError);
-                        if (attempt >= retryAttempts) {
-                            return { success: false, chunkIndex, streamQueueWaitMs, attempt };
-                        }
-                        await new Promise((resolve) => setTimeout(resolve, 250));
-                    }
-                }
-
-                return { success: false, chunkIndex, streamQueueWaitMs, attempt: retryAttempts };
-            });
+            closeStream();
         });
 
         let firstAudioSentAt = null;
         let successfulChunks = 0;
-        for (let i = 0; i < chunkTasks.length; i++) {
-            if (streamClosed) {
+
+        for (let i = 0; i < chunks.length; i++) {
+            if (state.stopped || streamClosed) {
                 break;
             }
 
-            const result = await chunkTasks[i];
+            await waitIfPaused(state);
+            if (state.stopped || streamClosed) {
+                break;
+            }
+
+            const chunkStartedAt = Date.now();
+            let result = null;
+            for (let attempt = 1; attempt <= retryAttempts; attempt++) {
+                try {
+                    const { audioBuffer, meta } = await ttsService.synthesizeWithMeta(
+                        chunks[i],
+                        voice,
+                        parsedSpeed,
+                        model,
+                        { lane: 'stream' }
+                    );
+                    result = {
+                        success: true,
+                        attempt,
+                        chunkIndex: i,
+                        chunkText: chunks[i],
+                        audioBuffer,
+                        streamQueueWaitMs: 0,
+                        meta,
+                        chunkMs: Date.now() - chunkStartedAt,
+                    };
+                    break;
+                } catch (synthError) {
+                    console.error(`Error synthesizing chunk ${i} (attempt ${attempt}/${retryAttempts}):`, synthError);
+                    if (attempt >= retryAttempts) {
+                        result = { success: false, attempt, chunkIndex: i, streamQueueWaitMs: 0 };
+                    } else {
+                        await new Promise((resolve) => setTimeout(resolve, 250));
+                    }
+                }
+            }
+
             if (!result.success) {
                 res.write(`data: ${JSON.stringify({ type: 'error', message: 'Failed to synthesize chunk after retries', chunkIndex: i })}\n\n`);
-                perfLog(`[TTS][stream][${reqId}] chunk=${i} failed attempts=${result.attempt} streamQueueWaitMs=${result.streamQueueWaitMs}`);
+                perfLog(`[TTS][stream][${reqId}] streamId=${streamId} chunk=${i} failed attempts=${result.attempt} streamQueueWaitMs=${result.streamQueueWaitMs}`);
                 continue;
             }
 
@@ -147,23 +236,28 @@ async function streamChunks(req, res, next) {
 
             if (!firstAudioSentAt) {
                 firstAudioSentAt = Date.now();
-                perfLog(`[TTS][stream][${reqId}] firstAudioLatencyMs=${firstAudioSentAt - requestStartedAt} (includes chunking)`);
+                perfLog(`[TTS][stream][${reqId}] streamId=${streamId} firstAudioLatencyMs=${firstAudioSentAt - requestStartedAt} (includes chunking)`);
             }
 
             res.write(`data: ${JSON.stringify(eventPayload)}\n\n`);
             successfulChunks += 1;
-            perfLog(`[TTS][stream][${reqId}] chunk=${i} attempt=${result.attempt} cacheHit=${result.meta.cacheHit} streamQueueWaitMs=${result.streamQueueWaitMs} inferenceQueueWaitMs=${result.meta.inferenceQueueWaitMs} synthMs=${result.meta.synthMs} encodeMs=${result.meta.encodeMs} bytes=${result.meta.bytes}`);
+            perfLog(`[TTS][stream][${reqId}] streamId=${streamId} chunk=${i} attempt=${result.attempt} cacheHit=${result.meta.cacheHit} streamQueueWaitMs=${result.streamQueueWaitMs} inferenceQueueWaitMs=${result.meta.inferenceQueueWaitMs} synthMs=${result.meta.synthMs} encodeMs=${result.meta.encodeMs} bytes=${result.meta.bytes}`);
+
+            // Yield to event loop so stream control requests can be handled between chunks.
+            await new Promise((resolve) => setImmediate(resolve));
         }
 
-        clearInterval(keepAliveInterval);
-        if (!streamClosed) {
+        if (!streamClosed && !state.stopped) {
             res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
             res.end();
-            perfLog(`[TTS][stream][${reqId}] done successfulChunks=${successfulChunks}/${chunks.length} totalMs=${Date.now() - requestStartedAt}`);
+            perfLog(`[TTS][stream][${reqId}] streamId=${streamId} done successfulChunks=${successfulChunks}/${chunks.length} totalMs=${Date.now() - requestStartedAt}`);
         }
     } catch (err) {
         next(err);
+    } finally {
+        closeStream();
+        streamStates.delete(streamId);
     }
 }
 
-module.exports = { synthesize, chunk, pipeline, streamChunks };
+module.exports = { synthesize, chunk, pipeline, streamChunks, controlStream };
