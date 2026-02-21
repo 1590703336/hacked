@@ -88,11 +88,12 @@ async function callTTS(text, voice = "nova") {
   if (!res.ok) throw new Error(`TTS failed: ${res.status}`);
   // Return as base64 so it can be passed via message
   const blob = await res.blob();
+  const mimeType = blob.type || res.headers.get("content-type") || "audio/wav";
   const buffer = await blob.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   let binary = "";
   bytes.forEach(b => binary += String.fromCharCode(b));
-  return { success: true, audioBase64: btoa(binary), mimeType: "audio/mpeg" };
+  return { success: true, audioBase64: btoa(binary), mimeType };
 }
 
 async function callTutor(question, context = "") {

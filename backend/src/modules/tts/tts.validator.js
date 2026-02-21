@@ -1,23 +1,20 @@
 const { ValidationError } = require('../../shared/errors');
 
-const VALID_VOICES = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
-const VALID_MODELS = ['tts-1', 'tts-1-hd'];
-
 function validateTTSOptions(options, next) {
     const { voice, speed, model } = options;
 
-    if (voice && !VALID_VOICES.includes(voice)) {
-        return next(new ValidationError(`voice must be one of: ${VALID_VOICES.join(', ')}`));
+    if (voice !== undefined && (typeof voice !== 'string' || voice.trim().length === 0)) {
+        return next(new ValidationError('voice must be a non-empty string'));
     }
 
-    if (model && !VALID_MODELS.includes(model)) {
-        return next(new ValidationError(`model must be one of: ${VALID_MODELS.join(', ')}`));
+    if (model !== undefined && (typeof model !== 'string' || model.trim().length === 0)) {
+        return next(new ValidationError('model must be a non-empty string'));
     }
 
     if (speed !== undefined) {
         const speedNum = Number(speed);
-        if (isNaN(speedNum) || speedNum < 0.25 || speedNum > 4.0) {
-            return next(new ValidationError('speed must be a number between 0.25 and 4.0'));
+        if (isNaN(speedNum) || speedNum < 0.5 || speedNum > 2.0) {
+            return next(new ValidationError('speed must be a number between 0.5 and 2.0'));
         }
     }
 
@@ -72,5 +69,4 @@ function validateStream(req, _res, next) {
 }
 
 module.exports = { validateSynthesize, validateChunk, validatePipeline, validateStream };
-
 

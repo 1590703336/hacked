@@ -47,6 +47,7 @@ export default function App() {
   const isPlayingRef = useRef(false);
   const isPausedRef = useRef(false);
   const streamDoneRef = useRef(false);
+  const ttsMimeTypeRef = useRef("audio/wav");
   const tutorMessagesRef = useRef([]);
   const resultTextRef = useRef("");
   const summaryTextRef = useRef("");
@@ -232,7 +233,8 @@ export default function App() {
 
     isPlayingRef.current = true;
     setCurrentChunkIndex(nextChunk.chunkIndex);
-    const audio = new Audio(`data:audio/mpeg;base64,${nextChunk.audioBase64}`);
+    const mimeType = nextChunk.mimeType || ttsMimeTypeRef.current || "audio/wav";
+    const audio = new Audio(`data:${mimeType};base64,${nextChunk.audioBase64}`);
     currentAudioRef.current = audio;
 
     audio.onended = () => {
@@ -272,6 +274,7 @@ export default function App() {
     setReadingTarget(target);
     setTtsSourceLabel(target === "summary" ? "Summary" : "OCR Result");
     streamDoneRef.current = false;
+    ttsMimeTypeRef.current = "audio/wav";
 
     const params = new URLSearchParams({
       markdown: textToRead,
@@ -292,6 +295,9 @@ export default function App() {
 
       if (payload.type === "metadata") {
         setTtsChunkCount(payload.chunkCount || 0);
+        if (typeof payload.mimeType === "string" && payload.mimeType.length > 0) {
+          ttsMimeTypeRef.current = payload.mimeType;
+        }
         return;
       }
 
@@ -661,7 +667,8 @@ export default function App() {
       throw new Error(`Tutor TTS failed: ${fallback || ttsRes.status}`);
     }
     const audioBuffer = await ttsRes.arrayBuffer();
-    const audioBlob = new Blob([audioBuffer], { type: "audio/mpeg" });
+    const mimeType = ttsRes.headers.get("content-type") || "audio/wav";
+    const audioBlob = new Blob([audioBuffer], { type: mimeType });
     const audioUrl = URL.createObjectURL(audioBlob);
     stopTutorAnswerAudio();
     if (isReadingRef.current && !isPausedRef.current) {
