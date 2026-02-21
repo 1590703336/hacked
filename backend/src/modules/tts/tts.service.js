@@ -38,6 +38,14 @@ const chunkCache = new LRUCache({
 });
 
 const kokoroModelCache = new Map();
+const ttsInferenceLimit = pLimit(Math.max(1, Number(config.ttsInferenceConcurrency) || 2));
+let prewarmPromise = null;
+
+function perfLog(message) {
+    if (config.enablePerfLogs) {
+        console.log(message);
+    }
+}
 
 function normalizeModel(model = config.ttsModel) {
     const modelValue = typeof model === 'string' && model.trim().length > 0
@@ -193,6 +201,7 @@ async function getKokoro(model) {
     }
 
     const loaderPromise = (async () => {
+        const loadStartedAt = Date.now();
         let KokoroTTS;
         try {
             ({ KokoroTTS } = require('kokoro-js'));
@@ -200,10 +209,12 @@ async function getKokoro(model) {
             throw new AppError('kokoro-js is not installed. Run npm install in backend.', 500);
         }
 
-        return KokoroTTS.from_pretrained(modelId, {
+        const model = await KokoroTTS.from_pretrained(modelId, {
             dtype: config.ttsDtype,
             device: config.ttsDevice,
         });
+        perfLog(`[TTS][kokoro] model loaded model="${modelId}" device=${config.ttsDevice} dtype=${config.ttsDtype} loadMs=${Date.now() - loadStartedAt}`);
+        return model;
     })().catch((loadError) => {
         kokoroModelCache.delete(cacheKey);
         if (loadError instanceof AppError) {
@@ -244,11 +255,24 @@ async function synthesizeRawAudio(text, voice = config.ttsDefaultVoice, speed = 
         const kokoro = await getKokoro(modelId);
         const resolvedVoice = resolveVoiceForModel(kokoro, voice);
         const resolvedSpeed = normalizeSpeed(speed);
+        const queuedAt = Date.now();
+        let inferenceStartedAt = queuedAt;
 
-        return await kokoro.generate(text, {
-            voice: resolvedVoice,
-            speed: resolvedSpeed,
+        const rawAudio = await ttsInferenceLimit(async () => {
+            inferenceStartedAt = Date.now();
+            return kokoro.generate(text, {
+                voice: resolvedVoice,
+                speed: resolvedSpeed,
+            });
         });
+
+        return {
+            rawAudio,
+            inferenceQueueWaitMs: Math.max(0, inferenceStartedAt - queuedAt),
+            voice: resolvedVoice,
+            model: modelId,
+            speed: resolvedSpeed,
+        };
     } catch (error) {
         if (error instanceof AppError) {
             throw error;
@@ -259,6 +283,12 @@ async function synthesizeRawAudio(text, voice = config.ttsDefaultVoice, speed = 
 }
 
 async function synthesize(text, voice = config.ttsDefaultVoice, speed = 1.0, model = config.ttsModel) {
+    const { audioBuffer } = await synthesizeWithMeta(text, voice, speed, model);
+    return audioBuffer;
+}
+
+async function synthesizeWithMeta(text, voice = config.ttsDefaultVoice, speed = 1.0, model = config.ttsModel) {
+    const startedAt = Date.now();
     if (!text) {
         throw new ValidationError('text is required');
     }
@@ -269,13 +299,46 @@ async function synthesize(text, voice = config.ttsDefaultVoice, speed = 1.0, mod
     const cacheKey = generateCacheKey(text, normalizedVoice, normalizedSpeed, normalizedModel);
     const cachedAudio = ttsCache.get(cacheKey);
     if (cachedAudio) {
-        return cachedAudio;
+        return {
+            audioBuffer: cachedAudio,
+            meta: {
+                cacheHit: true,
+                totalMs: Date.now() - startedAt,
+                synthMs: 0,
+                encodeMs: 0,
+                inferenceQueueWaitMs: 0,
+                voice: normalizedVoice,
+                model: normalizedModel,
+                speed: normalizedSpeed,
+                bytes: cachedAudio.length,
+            },
+        };
     }
 
-    const rawAudio = await synthesizeRawAudio(text, normalizedVoice, normalizedSpeed, normalizedModel);
-    const wavBuffer = rawAudioToWavBuffer(rawAudio);
+    const synthStartedAt = Date.now();
+    const synthResult = await synthesizeRawAudio(text, normalizedVoice, normalizedSpeed, normalizedModel);
+    const synthMs = Date.now() - synthStartedAt;
+
+    const encodeStartedAt = Date.now();
+    const wavBuffer = rawAudioToWavBuffer(synthResult.rawAudio);
+    const encodeMs = Date.now() - encodeStartedAt;
+
     ttsCache.set(cacheKey, wavBuffer);
-    return wavBuffer;
+
+    return {
+        audioBuffer: wavBuffer,
+        meta: {
+            cacheHit: false,
+            totalMs: Date.now() - startedAt,
+            synthMs,
+            encodeMs,
+            inferenceQueueWaitMs: synthResult.inferenceQueueWaitMs,
+            voice: synthResult.voice,
+            model: synthResult.model,
+            speed: synthResult.speed,
+            bytes: wavBuffer.length,
+        },
+    };
 }
 
 async function semanticChunk(markdown) {
@@ -349,12 +412,40 @@ async function synthesizeAll(markdown, voice = config.ttsDefaultVoice, speed = 1
         limit(() => synthesizeRawAudio(chunk, voice, speed, model))
     );
 
-    const rawAudios = await Promise.all(synthesisPromises);
+    const rawResults = await Promise.all(synthesisPromises);
+    const rawAudios = rawResults.map((item) => item.rawAudio);
     return concatRawAudioToWav(rawAudios);
+}
+
+function prewarmKokoro() {
+    if (prewarmPromise) {
+        return prewarmPromise;
+    }
+
+    prewarmPromise = (async () => {
+        const startedAt = Date.now();
+        const modelId = normalizeModel(config.ttsModel);
+        const kokoro = await getKokoro(modelId);
+        const voice = resolveVoiceForModel(kokoro, config.ttsDefaultVoice);
+        await kokoro.generate('Warmup.', { voice, speed: 1.0 });
+        perfLog(`[TTS][kokoro] prewarm complete model="${modelId}" voice=${voice} totalMs=${Date.now() - startedAt}`);
+    })().catch((error) => {
+        prewarmPromise = null;
+        console.warn('[TTS][kokoro] prewarm failed:', error.message || error);
+    });
+
+    return prewarmPromise;
+}
+
+if (config.ttsPrewarm) {
+    setTimeout(() => {
+        prewarmKokoro();
+    }, 0);
 }
 
 module.exports = {
     synthesize,
+    synthesizeWithMeta,
     semanticChunk,
     synthesizeAll,
     outputMimeType: OUTPUT_MIME_TYPE,
