@@ -1,6 +1,6 @@
 ### OCR Module — Manual Smoke Tests
 ### Run against: POST http://localhost:3001/api/ocr
-### Requires: server running (`npm run dev`) + real GEMINI_API_KEY in .env
+### Requires: server running (`npm run dev`) + real OPENROUTER_API_KEY in .env
 
 ###──────────────────────────────────────────────────────────────────────────────
 ### Case 1 — Valid PNG (base64 of a real image)

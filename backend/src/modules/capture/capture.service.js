@@ -1,6 +1,12 @@
 const { ValidationError } = require('../../shared/errors');
+const path = require('path');
+const { pdfToPng } = require('pdf-to-png-converter');
 
-const pdf2img = require('pdf-img-convert');
+// Resolve the pdfjs-dist used by pdf-to-png-converter to locate CMaps and standard fonts
+const converterPath = require.resolve('pdf-to-png-converter');
+const pdfjsDistPkgPath = require.resolve('pdfjs-dist/package.json', { paths: [converterPath] });
+const CMAP_URL = path.join(path.dirname(pdfjsDistPkgPath), 'cmaps') + '/';
+const STANDARD_FONTS_URL = path.join(path.dirname(pdfjsDistPkgPath), 'standard_fonts') + '/';
 
 /**
  * Process an uploaded file (PDF or image).
@@ -15,11 +21,15 @@ async function processUpload(file) {
     let images = [];
 
     if (file.mimetype === 'application/pdf') {
-        const pdfArray = await pdf2img.convert(file.buffer, {
-            base64: true,
-            scale: 2.0 // Better resolution for OCR
+        const pngPages = await pdfToPng(file.buffer, {
+            disableFontFace: true,
+            useSystemFonts: true,
+            viewportScale: 2.0,
+            cMapUrl: CMAP_URL,
+            cMapPacked: true,
+            standardFontDataUrl: STANDARD_FONTS_URL
         });
-        images = pdfArray; // These are base64 strings
+        images = pngPages.map(p => p.content.toString('base64')); // These are base64 strings
     } else if (file.mimetype.startsWith('image/')) {
         images = [file.buffer.toString('base64')];
     } else {

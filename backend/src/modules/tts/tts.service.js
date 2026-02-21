@@ -5,7 +5,14 @@ const pLimit = require('p-limit');
 const config = require('../../config');
 const { ValidationError, AppError } = require('../../shared/errors');
 
+// Only use this client for OpenAI's raw tts-1 audio endpoints
 const openai = new OpenAI({ apiKey: config.openaiApiKey });
+
+// Use this client for LLM text reasoning
+const openrouter = new OpenAI({
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey: config.openRouterApiKey,
+});
 
 // Cache up to 500 TTS chunks (approx 50MB of audio in memory) to save API calls
 const ttsCache = new LRUCache({
@@ -86,13 +93,13 @@ async function semanticChunk(markdown) {
 
     try {
         // Use GPT to convert remaining LaTeX and structure into natural speech chunks
-        const response = await openai.chat.completions.create({
-            model: 'gpt-4o',
+        const response = await openrouter.chat.completions.create({
+            model: 'openai/gpt-4o',
             messages: [
                 {
                     role: 'system',
                     content:
-                        'You are a preprocessor for a text-to-speech engine. Convert the given Markdown text into an array of speakable chunks. Convert any remaining LaTeX formulas into natural language pronunciation. Each chunk should be a natural sentence or phrase. Output as a JSON array of strings.',
+                        "You are a preprocessor for a text-to-speech engine. Convert the given Markdown text into an array of speakable chunks. Convert any remaining LaTeX formulas into natural language pronunciation. Each chunk should be a natural sentence or phrase.\n\nRules:\n1. Chunk strictly by natural pauses (periods, commas, question marks).\n2. Do NOT split in the middle of a mathematical formula or hyphenated word.\n3. Expand common academic acronyms if they are generally spelled out when spoken (e.g., 'e.g.' -> 'for example', 'i.e.' -> 'that is', 'vs.' -> 'versus').\n4. Output as a JSON array of strings.",
                 },
                 { role: 'user', content: processedText },
             ],

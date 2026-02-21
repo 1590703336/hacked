@@ -45,7 +45,7 @@ describe('POST /api/ocr — controller integration', () => {
         ocrService.recognize.mockResolvedValueOnce({
             markdown: '## Notes\n\n$$F = ma$$',
             noTextDetected: false,
-            model: 'gemini-3-flash-preview',
+            model: 'google/gemini-3-flash-preview',
             mimeType: 'image/png',
             latencyMs: 850,
             usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
@@ -78,7 +78,7 @@ describe('POST /api/ocr — controller integration', () => {
 
     test('3. Service throws ProviderError → 502 with error name in body', async () => {
         ocrService.recognize.mockRejectedValueOnce(
-            new ProviderError('gemini-3-flash-preview', 'quota exceeded')
+            new ProviderError('google/gemini-3-flash-preview', 'quota exceeded')
         );
 
         const app = buildApp();
