@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { useHotkeys } from "react-hotkeys-hook";
 import "./App.css";
 
 export default function App() {
@@ -7,6 +8,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [resultText, setResultText] = useState("");
+  const [showOcrText, setShowOcrText] = useState(false);
   const [processedImages, setProcessedImages] = useState([]);
   const [summaryText, setSummaryText] = useState("");
   const [summarizing, setSummarizing] = useState(false);
@@ -46,15 +48,19 @@ export default function App() {
   const isPausedRef = useRef(false);
   const streamDoneRef = useRef(false);
   const tutorMessagesRef = useRef([]);
+  const resultTextRef = useRef("");
+  const summaryTextRef = useRef("");
   const mediaRecorderRef = useRef(null);
   const recordingStreamRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const tutorAudioRef = useRef(null);
-  const togglePauseReadingRef = useRef(() => {});
+  const togglePauseReadingRef = useRef(() => { });
+  const pauseReadingRef = useRef(() => { });
   const isReadingRef = useRef(false);
   const whisperTestRecorderRef = useRef(null);
   const whisperTestStreamRef = useRef(null);
   const whisperTestChunksRef = useRef([]);
+  const [hasInteracted, setHasInteracted] = useState(false);
   const whisperTestStartedAtRef = useRef(0);
   const whisperTestPlaybackAudioRef = useRef(null);
   const whisperTestPlaybackUrlRef = useRef("");
@@ -64,7 +70,21 @@ export default function App() {
   const whisperTestMonitorTimerRef = useRef(null);
   const whisperTestPeakRef = useRef(0);
   const tutorStartedAtRef = useRef(0);
-  const unmountCleanupRef = useRef(() => {});
+  const unmountCleanupRef = useRef(() => { });
+  const fileInputRef = useRef(null);
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const speakFeedback = useCallback((text) => {
+    return new Promise((resolve) => {
+      if (!text) return resolve();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.onend = resolve;
+      // Also resolve on error so we don't hang if TTS fails
+      utterance.onerror = resolve;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    });
+  }, []);
 
   const closeStream = () => {
     if (eventSourceRef.current) {
@@ -315,22 +335,28 @@ export default function App() {
     };
   };
 
-  const getSummaryReadableText = () => {
-    if (!summaryText) return "";
-    if (typeof summaryText === "string") return summaryText;
-    if (Array.isArray(summaryText.takeaways)) {
-      return summaryText.takeaways
+  const getSummaryReadableText = (summaryInput = summaryText) => {
+    if (!summaryInput) return "";
+    if (typeof summaryInput === "string") return summaryInput;
+    if (Array.isArray(summaryInput.takeaways)) {
+      return summaryInput.takeaways
         .map((point, idx) => `${idx + 1}. ${point}`)
         .join("\n");
     }
-    return JSON.stringify(summaryText, null, 2);
+    return JSON.stringify(summaryInput, null, 2);
   };
 
   const getCurrentReadingText = () => {
-    if (readingTarget === "summary") return getSummaryReadableText();
-    if (readingTarget === "ocr") return resultText;
-    if (summaryText) return getSummaryReadableText();
-    return resultText;
+    const latestResultText = resultTextRef.current;
+    const latestSummaryText = summaryTextRef.current;
+    let context = "";
+    if (latestResultText) {
+      context += `[DOCUMENT TEXT]\n${latestResultText}\n\n`;
+    }
+    if (latestSummaryText) {
+      context += `[SUMMARY]\n${getSummaryReadableText(latestSummaryText)}\n\n`;
+    }
+    return context.trim() || "(no content available)";
   };
 
   const addTutorMessage = (role, text) => {
@@ -394,7 +420,7 @@ export default function App() {
       whisperTestMonitorAnalyserRef.current = null;
     }
     if (whisperTestMonitorAudioContextRef.current) {
-      whisperTestMonitorAudioContextRef.current.close().catch(() => {});
+      whisperTestMonitorAudioContextRef.current.close().catch(() => { });
       whisperTestMonitorAudioContextRef.current = null;
     }
     setMicLevel(0);
@@ -452,7 +478,7 @@ export default function App() {
       gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
       oscillator.stop(ctx.currentTime + 0.42);
       oscillator.onended = () => {
-        ctx.close().catch(() => {});
+        ctx.close().catch(() => { });
       };
     } catch (err) {
       console.error(err);
@@ -638,6 +664,9 @@ export default function App() {
     const audioBlob = new Blob([audioBuffer], { type: "audio/mpeg" });
     const audioUrl = URL.createObjectURL(audioBlob);
     stopTutorAnswerAudio();
+    if (isReadingRef.current && !isPausedRef.current) {
+      pauseReadingRef.current(); // Ensuring background TTS pauses before Tutor speaks
+    }
     const answerAudio = new Audio(audioUrl);
     tutorAudioRef.current = answerAudio;
     answerAudio.onended = () => {
@@ -658,14 +687,19 @@ export default function App() {
     setIsRecording(false);
   };
 
-  const startRecordingQuestion = async () => {
+  const startRecordingQuestion = async ({ announce = false } = {}) => {
     if (isRecording || isTranscribing || isTutorThinking) return;
     try {
       setTutorError(null);
-      if (isReading && !isPausedRef.current) {
-        pauseReading();
+      if (isReadingRef.current && !isPausedRef.current) {
+        pauseReadingRef.current();
       }
       stopTutorAnswerAudio();
+      window.speechSynthesis.cancel();
+      if (announce) {
+        await speakFeedback("Recording started. Please speak your question.");
+        await delay(150);
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       recordingStreamRef.current = stream;
       const recorder = buildRecorder(stream);
@@ -725,7 +759,16 @@ export default function App() {
   }, [tutorMessages]);
 
   useEffect(() => {
+    resultTextRef.current = resultText;
+  }, [resultText]);
+
+  useEffect(() => {
+    summaryTextRef.current = summaryText;
+  }, [summaryText]);
+
+  useEffect(() => {
     togglePauseReadingRef.current = togglePauseReading;
+    pauseReadingRef.current = pauseReading;
   });
 
   useEffect(() => {
@@ -743,19 +786,26 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      const targetTag = event.target?.tagName;
-      const isEditable =
-        targetTag === "INPUT" ||
-        targetTag === "TEXTAREA" ||
-        event.target?.isContentEditable;
-      if (isEditable) return;
-      if (event.code === "Space" && isReadingRef.current) {
-        event.preventDefault();
-        togglePauseReadingRef.current();
+      // Just catch general global events if we need them, 
+      // Space logic has been moved purely to react-hotkeys-hook.
+      if (event.code === "Escape") {
+        stopReading();
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
+
+    // Electron IPC handlers
+    if (window.electronAPI) {
+      window.electronAPI.onScreenCaptured((base64Image) => {
+        speakFeedback("Screenshot captured. Uploading and processing now.");
+        handleImageUpload(base64Image, "screenshot.png", "image/png");
+      });
+      window.electronAPI.onShortcutCapture(() => {
+        speakFeedback("Screenshot shortcut detected. Capturing screen.");
+      });
+    }
+
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       if (eventSourceRef.current) {
@@ -785,6 +835,28 @@ export default function App() {
     };
   }, [activePage]);
 
+  const handleImageUpload = (base64String, filename, mimeType) => {
+    // Convert base64 to Blob
+    const byteCharacters = atob(base64String);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const fileBlob = new Blob([byteArray], { type: mimeType });
+
+    // Create a File object
+    const newFile = new File([fileBlob], filename, { type: mimeType });
+    setFile(newFile);
+  };
+
+  // Trigger upload whenever setFile is called (either by IPC capture or by manual file selection)
+  useEffect(() => {
+    if (file) {
+      handleUpload();
+    }
+  }, [file]);
+
   const handleUpload = async () => {
     if (!file) return;
     stopReading();
@@ -799,12 +871,16 @@ export default function App() {
     setError(null);
     setTtsError(null);
     setResultText("");
+    resultTextRef.current = "";
+    setShowOcrText(false);
     setSummaryText("");
+    summaryTextRef.current = "";
     setProcessedImages([]);
     setTtsChunkCount(0);
     setTtsChunks([]);
     setCurrentChunkIndex(null);
     setTtsSourceLabel("");
+    speakFeedback("File uploaded. Processing started.");
 
     try {
       // 1. Capture API
@@ -877,6 +953,8 @@ export default function App() {
       await Promise.all(workers);
       const combinedText = segments.join("");
       setResultText(combinedText);
+      resultTextRef.current = combinedText;
+      speakFeedback("OCR processing finished. Document is ready.");
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -890,6 +968,8 @@ export default function App() {
     setSummarizing(true);
     setError(null);
     setSummaryText("");
+    summaryTextRef.current = "";
+    speakFeedback("Summary processing started.");
 
     try {
       const summarizeRes = await fetch("/api/summarize", {
@@ -906,6 +986,8 @@ export default function App() {
       }
 
       setSummaryText(summarizeData.data);
+      summaryTextRef.current = summarizeData.data;
+      speakFeedback("Summary processing finished.");
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -932,6 +1014,140 @@ export default function App() {
     setWhisperTestTranscribing(false);
     setActivePage("main");
   };
+
+  // --- HOTKEYS ---
+  useHotkeys('ctrl+k, cmd+k', async (e) => {
+    e.preventDefault();
+    if (isReadingRef.current && readingTarget === "ocr") {
+      if (isPausedRef.current) {
+        await speakFeedback("Reading resumed");
+        togglePauseReadingRef.current();
+      } else {
+        togglePauseReadingRef.current();
+        speakFeedback("Reading paused");
+      }
+    } else if (resultText) {
+      await speakFeedback("OCR chunk processing started. Generating read aloud audio.");
+      startReading(resultText, "ocr");
+    } else {
+      speakFeedback("No document is currently available to read.");
+    }
+  }, { enableOnFormTags: true }, [resultText, isReadingRef, isPausedRef, readingTarget]);
+
+  useHotkeys('ctrl+l, cmd+l', async (e) => {
+    e.preventDefault();
+    if (isReadingRef.current && readingTarget === "summary") {
+      if (isPausedRef.current) {
+        await speakFeedback("Reading resumed");
+        togglePauseReadingRef.current();
+      } else {
+        togglePauseReadingRef.current();
+        speakFeedback("Reading paused");
+      }
+    } else if (summaryText) {
+      await speakFeedback("Summary chunk processing started. Generating read aloud audio.");
+      startReading(getSummaryReadableText(), "summary");
+    } else {
+      speakFeedback("No summary has been generated yet.");
+    }
+  }, { enableOnFormTags: true }, [summaryText, isReadingRef, isPausedRef, readingTarget]);
+
+  useHotkeys('ctrl+r, cmd+r', async (e) => {
+    e.preventDefault();
+    if (isRecording) {
+      stopRecordingQuestion();
+      await speakFeedback("Recording stopped. Processing.");
+    } else {
+      await startRecordingQuestion({ announce: true });
+    }
+  }, { enableOnFormTags: true }, [isRecording, startRecordingQuestion, stopRecordingQuestion, speakFeedback]);
+
+  useHotkeys('ctrl+u, cmd+u', (e) => {
+    e.preventDefault();
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+      speakFeedback("Upload file dialog opened");
+    }
+  }, { enableOnFormTags: true });
+
+  useHotkeys('ctrl+shift+a, cmd+shift+a', async (e) => {
+    e.preventDefault();
+    if (window.electronAPI?.requestCapture) {
+      await speakFeedback("Screenshot shortcut triggered. Preparing capture.");
+      window.electronAPI.requestCapture();
+      return;
+    }
+    speakFeedback("Screenshot capture shortcut is available in the desktop app.");
+  }, { enableOnFormTags: true }, [speakFeedback]);
+
+  useHotkeys('ctrl+s, cmd+s', (e) => {
+    e.preventDefault();
+    if (resultText && !summarizing) {
+      handleSummarize();
+    } else if (summarizing) {
+      speakFeedback("Already summarizing.");
+    } else {
+      speakFeedback("No document to summarize.");
+    }
+  }, { enableOnFormTags: true }, [resultText, summarizing]);
+
+
+
+  useHotkeys('ctrl+h, cmd+h', (e) => {
+    e.preventDefault();
+    if (isReadingRef.current && !isPausedRef.current) {
+      pauseReadingRef.current();
+    }
+    speakFeedback("Shortcuts: Control K to read or pause document. Control L to read or pause summary. Control R to record a question. Control Shift A to capture a screenshot and run OCR. Control U to upload a file. Control S to summarize. Control Right or Left arrow to skip forward or backward 5 seconds.");
+  }, { enableOnFormTags: true });
+
+  // --- ACCESSIBILITY ANNOUNCEMENTS ---
+  // Browsers block autoplay audio (including TTS) until a user interaction occurs.
+  // We fire the welcome message explicitly in the onClick/onKeyDown of the welcome overlay.
+
+  useEffect(() => {
+    if (resultText && !summaryText) {
+      speakFeedback("Document processed. Control S to summarize. Control K to read document aloud. Control R to ask a question. Control Shift A to capture another screenshot.");
+    }
+  }, [resultText, summaryText, speakFeedback]);
+
+  useEffect(() => {
+    if (summaryText) {
+      speakFeedback("Summary generated. Control L to read summary aloud.");
+    }
+  }, [summaryText, speakFeedback]);
+
+  const handleInitialInteraction = () => {
+    if (!hasInteracted) {
+      setHasInteracted(true);
+      speakFeedback("Application loaded. Shortcuts: Control U to upload a file. Control Shift A to capture screenshot and run OCR. Control H to repeat instructions anytime.");
+    }
+  };
+
+  if (!hasInteracted) {
+    return (
+      <div
+        onClick={handleInitialInteraction}
+        onKeyDown={handleInitialInteraction}
+        tabIndex={0}
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: "#0d1117",
+          color: "#e8f0f8",
+          fontFamily: "sans-serif",
+          cursor: "pointer"
+        }}
+      >
+        <div style={{ textAlign: "center", padding: "2rem", border: "2px solid #3c5268", borderRadius: "12px", backgroundColor: "#1b2938" }}>
+          <h1 style={{ marginBottom: "1rem" }}>Welcome to the Accessible OCR App</h1>
+          <p style={{ fontSize: "1.3rem", color: "#8fa4bc" }}>Click anywhere or press any key to start and enable audio.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (activePage === "whisper-test") {
     return (
@@ -1132,7 +1348,17 @@ export default function App() {
   }
 
   return (
-    <div style={{ padding: "2rem", maxWidth: "800px", margin: "0 auto", fontFamily: "sans-serif" }}>
+    <div style={{ padding: "2rem", maxWidth: "800px", margin: "0 auto", fontFamily: "sans-serif", minHeight: "100vh" }}>
+      <div aria-live="polite" aria-atomic="true" style={{ position: "absolute", width: "1px", height: "1px", padding: 0, margin: "-1px", overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}>
+        {loading ? "Processing document. Please wait." : ""}
+        {summarizing ? "Generating summary." : ""}
+        {isRecording ? "Listening to your question." : ""}
+        {isTranscribing ? "Transcribing your audio." : ""}
+        {isTutorThinking ? "Tutor is thinking." : ""}
+        {error ? "Error: " + error : ""}
+        {ttsError ? "Audio Error: " + ttsError : ""}
+        {tutorError ? "Tutor Error: " + tutorError : ""}
+      </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
         <h1>Simple Upload & OCR</h1>
         <button
@@ -1152,24 +1378,24 @@ export default function App() {
       <div style={{ marginBottom: "1.5rem", display: "flex", alignItems: "center", gap: "1rem" }}>
         <input
           type="file"
-          onChange={(e) => setFile(e.target.files[0])}
+          ref={fileInputRef}
+          onChange={(e) => {
+            const selectedFile = e.target.files[0];
+            if (selectedFile) {
+              setFile(selectedFile);
+              // Since state updates are async, we can't just call handleUpload() directly here reliably
+              // without it using the *old* state of `file`. The effect hook handles it.
+            }
+          }}
           style={{ color: "var(--text, black)" }}
         />
-        <button
-          onClick={handleUpload}
-          disabled={!file || loading}
-          style={{
-            padding: "0.5rem 1rem",
-            cursor: (!file || loading) ? "not-allowed" : "pointer",
-            backgroundColor: "#3ecfcf",
-            color: "#080b0f",
-            border: "none",
-            borderRadius: "8px",
-            fontWeight: "bold"
-          }}
-        >
-          {loading ? "Processing..." : "Upload & Process"}
-        </button>
+        {/* The upload button is hidden because the process is now automatic, 
+            but kept in the DOM if needed for fallback accessibility later */}
+        {loading && (
+          <div style={{ color: "#3ecfcf", fontWeight: "bold" }}>
+            Processing document automatically...
+          </div>
+        )}
       </div>
 
       {error && (
@@ -1180,19 +1406,61 @@ export default function App() {
 
       {resultText && (
         <div>
-          <h2>Result</h2>
-          <pre style={{
-            whiteSpace: "pre-wrap",
-            backgroundColor: "#1e2836",
-            color: "#e8f0f8",
-            padding: "1.5rem",
-            borderRadius: "8px",
-            border: "1px solid #263545",
-            marginTop: "1rem",
-            marginBottom: "1rem"
-              }}>
-                {resultText}
-              </pre>
+          <h2>Document Processed</h2>
+
+          {processedImages && processedImages.length > 0 && (
+            <div style={{ marginBottom: "1.5rem" }}>
+              <h3 style={{ marginBottom: "0.5rem" }}>Images (Screenshots/Uploads)</h3>
+              <div style={{ display: "flex", gap: "1rem", overflowX: "auto", paddingBottom: "0.5rem" }}>
+                {processedImages.map((base64Img, idx) => (
+                  <img
+                    key={idx}
+                    src={`data:image/png;base64,${base64Img}`}
+                    alt={`Processed document page ${idx + 1}`}
+                    style={{
+                      maxHeight: "300px",
+                      borderRadius: "8px",
+                      border: "1px solid #3c5268",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+            <button
+              onClick={() => setShowOcrText(!showOcrText)}
+              style={{
+                padding: "0.5rem 1rem",
+                cursor: "pointer",
+                backgroundColor: "#2a3b4c",
+                color: "#e8f0f8",
+                border: "1px solid #3c5268",
+                borderRadius: "8px",
+                fontWeight: "bold",
+              }}
+            >
+              {showOcrText ? "Hide Transcription" : "Show Transcription"}
+            </button>
+          </div>
+
+          {showOcrText && (
+            <pre style={{
+              whiteSpace: "pre-wrap",
+              backgroundColor: "#1e2836",
+              color: "#e8f0f8",
+              padding: "1.5rem",
+              borderRadius: "8px",
+              border: "1px solid #263545",
+              marginTop: "1rem",
+              marginBottom: "1rem"
+            }}>
+              {resultText}
+            </pre>
+          )}
+
           <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
             <button
               onClick={handleSummarize}
@@ -1411,24 +1679,6 @@ export default function App() {
         </div>
       )}
 
-      {processedImages.length > 0 && (
-        <div style={{ marginTop: "2rem" }}>
-          <h2>Processed Images ({processedImages.length})</h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: "1rem", marginTop: "1rem" }}>
-            {processedImages.map((base64Image, idx) => (
-              <div key={idx} style={{ border: "1px solid #263545", borderRadius: "8px", padding: "0.5rem", backgroundColor: "#1e2836" }}>
-                <p style={{ margin: "0 0 0.5rem 0", fontWeight: "bold", color: "#e8f0f8" }}>Image {idx + 1}</p>
-                <img
-                  src={`data:image/png;base64,${base64Image}`}
-                  alt={`Processed ${idx + 1}`}
-                  style={{ maxWidth: "100%", height: "auto", borderRadius: "4px" }}
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {(resultText || summaryText) && (
         <div
           style={{
@@ -1560,7 +1810,8 @@ export default function App() {
             ))}
           </div>
         </div>
-      )}
-    </div>
+      )
+      }
+    </div >
   );
 }

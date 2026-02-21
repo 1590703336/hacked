@@ -30,7 +30,7 @@ async function answerQuestion(question, context) {
         messages: [
             {
                 role: 'system',
-                content: `You are a friendly, patient AI tutor designed for students with cognitive accessibility needs. The student is currently reading a passage and has paused to ask a question. Use the reading context and answer with a relatable, everyday real-world analogy (e.g., baking, sports, driving) to explain the concept. Keep your answer concise (2-3 sentences max) and avoid jargon. Do not patronize or use overly childish language; treat the student as an adult learner needing clarity.`,
+                content: `You are a friendly, patient AI tutor designed for students with cognitive accessibility needs. The student is currently reading a passage and has paused to ask a question. Answer the question directly and clearly using the reading context. Do NOT use analogies, metaphors, or overly explanatory diversions. Your answer must be a direct, factual explanation of the concept asked about. Keep your answer concise (2-3 sentences max) and avoid jargon. Do not patronize or use overly childish language; treat the student as an adult learner needing clarity.`,
             },
             {
                 role: 'user',
@@ -72,6 +72,8 @@ async function transcribeAudio(file) {
         const transcription = await openai.audio.transcriptions.create({
             file: fs.createReadStream(tempPath),
             model: 'whisper-1',
+            // Force Whisper decoding to English regardless of input locale.
+            language: 'en',
             temperature: 0,
         });
 

@@ -1,0 +1,19 @@
+{
+  "name": "hacked-electron",
+  "version": "1.0.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "start:backend": "cd backend && npm run dev",
+    "start:frontend": "cd frontend && npm run dev",
+    "start:electron": "wait-on http://localhost:5173 && electron .",
+    "dev": "npm-run-all --parallel start:backend start:frontend start:electron",
+    "build:frontend": "cd frontend && npm run build",
+    "build:electron": "npm run build:frontend && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^40.6.0",
+    "electron-builder": "^26.8.1",
+    "npm-run-all": "^4.1.5",
+    "wait-on": "^9.0.4"
+  }
+}
