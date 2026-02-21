@@ -1099,8 +1099,9 @@ export default function App() {
     if (isReadingRef.current && !isPausedRef.current) {
       pauseReadingRef.current();
     }
-    speakFeedback("Shortcuts: Control K to read or pause document. Control L to read or pause summary. Control R to record a question. Control U to upload a file. Control S to summarize. Control Right or Left arrow to skip forward or backward 5 seconds.");
-  }, { enableOnFormTags: true });
+    const summaryInstruction = summaryText ? " Control L to read or pause summary." : "";
+    speakFeedback(`Shortcuts: Control K to read or pause document.${summaryInstruction} Control R to record a question. Control U to upload a file. Control S to summarize. Control Right or Left arrow to skip forward or backward 5 seconds.`);
+  }, { enableOnFormTags: true }, [summaryText]);
 
   // --- ACCESSIBILITY ANNOUNCEMENTS ---
   // Browsers block autoplay audio (including TTS) until a user interaction occurs.
