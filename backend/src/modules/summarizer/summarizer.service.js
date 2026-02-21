@@ -23,12 +23,12 @@ async function summarize(text, maxTakeaways = 3) {
         messages: [
             {
                 role: 'system',
-                content: `You are a TL;DR summarizer for students with cognitive accessibility needs. Output at most ${maxTakeaways} key takeaways using strictly plain English (Flesch-Kincaid Grade Level 6-8). Avoid all academic jargon, nested clauses, and complex vocabulary. Output ONLY a valid JSON array of strings: ["Takeaway 1", "Takeaway 2"]. Do not use markdown formatting like \`\`\`json.`,
+                content: `You are a detailed educational summarizer for students with cognitive accessibility needs. Output at most ${maxTakeaways} highly comprehensive key takeaways. Each takeaway should be a detailed, multi-sentence explanation that thoroughly covers the core concept rather than just a brief sentence. Use strictly plain English (Flesch-Kincaid Grade Level 6-8) to ensure it is very easy to read. Avoid all dense academic jargon, nested clauses, and complex vocabulary, but do not sacrifice depth of explanation. Output ONLY a valid JSON array of strings: ["Detailed explanation...", "Detailed explanation..."]. Do not use markdown block formatting like \`\`\`json.`,
             },
             { role: 'user', content: text },
         ],
         temperature: 0.3,
-        max_tokens: 500,
+        max_tokens: 1500,
     });
 
     let raw = response.choices[0]?.message?.content || '[]';
