@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
 export default function App() {
@@ -9,14 +9,173 @@ export default function App() {
   const [processedImages, setProcessedImages] = useState([]);
   const [summaryText, setSummaryText] = useState("");
   const [summarizing, setSummarizing] = useState(false);
+  const [isReading, setIsReading] = useState(false);
+  const [ttsError, setTtsError] = useState(null);
+  const [ttsChunkCount, setTtsChunkCount] = useState(0);
+  const [ttsChunks, setTtsChunks] = useState([]);
+  const [currentChunkIndex, setCurrentChunkIndex] = useState(null);
+
+  const eventSourceRef = useRef(null);
+  const audioQueueRef = useRef([]);
+  const currentAudioRef = useRef(null);
+  const isPlayingRef = useRef(false);
+  const streamDoneRef = useRef(false);
+
+  const closeStream = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+  };
+
+  const clearAudio = () => {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.src = "";
+      currentAudioRef.current = null;
+    }
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+  };
+
+  const stopReading = () => {
+    streamDoneRef.current = true;
+    closeStream();
+    clearAudio();
+    setIsReading(false);
+    setCurrentChunkIndex(null);
+  };
+
+  const playNextChunk = () => {
+    if (isPlayingRef.current) return;
+    const nextChunk = audioQueueRef.current.shift();
+
+    if (!nextChunk) {
+      if (streamDoneRef.current) {
+        setIsReading(false);
+        setCurrentChunkIndex(null);
+      }
+      return;
+    }
+
+    isPlayingRef.current = true;
+    setCurrentChunkIndex(nextChunk.chunkIndex);
+    const audio = new Audio(`data:audio/mpeg;base64,${nextChunk.audioBase64}`);
+    currentAudioRef.current = audio;
+
+    audio.onended = () => {
+      isPlayingRef.current = false;
+      currentAudioRef.current = null;
+      playNextChunk();
+    };
+
+    audio.onerror = () => {
+      isPlayingRef.current = false;
+      currentAudioRef.current = null;
+      setTtsError(`Chunk ${nextChunk.chunkIndex + 1} playback failed`);
+      playNextChunk();
+    };
+
+    audio.play().catch((playError) => {
+      console.error("Audio play failed:", playError);
+      isPlayingRef.current = false;
+      currentAudioRef.current = null;
+      setTtsError("Audio playback was blocked. Click read aloud again.");
+      stopReading();
+    });
+  };
+
+  const startReading = () => {
+    if (!resultText || isReading) return;
+
+    stopReading();
+    setTtsError(null);
+    setTtsChunkCount(0);
+    setTtsChunks([]);
+    setCurrentChunkIndex(null);
+    streamDoneRef.current = false;
+
+    const params = new URLSearchParams({ markdown: resultText });
+    const stream = new EventSource(`/api/tts/stream?${params.toString()}`);
+    eventSourceRef.current = stream;
+    setIsReading(true);
+
+    stream.onmessage = (event) => {
+      let payload;
+      try {
+        payload = JSON.parse(event.data);
+      } catch (parseError) {
+        console.error("Invalid SSE payload:", parseError, event.data);
+        return;
+      }
+
+      if (payload.type === "metadata") {
+        setTtsChunkCount(payload.chunkCount || 0);
+        return;
+      }
+
+      if (payload.type === "audio") {
+        setTtsChunks((prev) => {
+          const next = [...prev];
+          next[payload.chunkIndex] = payload.text || "";
+          return next;
+        });
+
+        audioQueueRef.current.push(payload);
+        playNextChunk();
+        return;
+      }
+
+      if (payload.type === "error") {
+        setTtsError(payload.message || "Failed to synthesize one chunk");
+        return;
+      }
+
+      if (payload.type === "done") {
+        streamDoneRef.current = true;
+        closeStream();
+        if (!isPlayingRef.current && audioQueueRef.current.length === 0) {
+          setIsReading(false);
+          setCurrentChunkIndex(null);
+        }
+      }
+    };
+
+    stream.onerror = () => {
+      streamDoneRef.current = true;
+      closeStream();
+      setTtsError("TTS stream connection dropped");
+      if (!isPlayingRef.current && audioQueueRef.current.length === 0) {
+        setIsReading(false);
+        setCurrentChunkIndex(null);
+      }
+    };
+  };
+
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.src = "";
+      }
+    };
+  }, []);
 
   const handleUpload = async () => {
     if (!file) return;
+    stopReading();
     setLoading(true);
     setError(null);
+    setTtsError(null);
     setResultText("");
     setSummaryText("");
     setProcessedImages([]);
+    setTtsChunkCount(0);
+    setTtsChunks([]);
+    setCurrentChunkIndex(null);
 
     try {
       // 1. Capture API
@@ -149,25 +308,101 @@ export default function App() {
             border: "1px solid #263545",
             marginTop: "1rem",
             marginBottom: "1rem"
-          }}>
-            {resultText}
-          </pre>
-          <button
-            onClick={handleSummarize}
-            disabled={summarizing}
-            style={{
-              padding: "0.5rem 1rem",
-              cursor: summarizing ? "not-allowed" : "pointer",
-              backgroundColor: "#fcba03",
-              color: "#080b0f",
-              border: "none",
+              }}>
+                {resultText}
+              </pre>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+            <button
+              onClick={handleSummarize}
+              disabled={summarizing}
+              style={{
+                padding: "0.5rem 1rem",
+                cursor: summarizing ? "not-allowed" : "pointer",
+                backgroundColor: "#fcba03",
+                color: "#080b0f",
+                border: "none",
+                borderRadius: "8px",
+                fontWeight: "bold",
+              }}
+            >
+              {summarizing ? "Summarizing..." : "Summarize"}
+            </button>
+
+            {!isReading ? (
+              <button
+                onClick={startReading}
+                style={{
+                  padding: "0.5rem 1rem",
+                  cursor: "pointer",
+                  backgroundColor: "#3ef07a",
+                  color: "#080b0f",
+                  border: "none",
+                  borderRadius: "8px",
+                  fontWeight: "bold",
+                }}
+              >
+                Read OCR Aloud
+              </button>
+            ) : (
+              <button
+                onClick={stopReading}
+                style={{
+                  padding: "0.5rem 1rem",
+                  cursor: "pointer",
+                  backgroundColor: "#ff7c3e",
+                  color: "#080b0f",
+                  border: "none",
+                  borderRadius: "8px",
+                  fontWeight: "bold",
+                }}
+              >
+                Stop Reading
+              </button>
+            )}
+          </div>
+
+          {(isReading || ttsChunkCount > 0 || ttsChunks.length > 0) && (
+            <div style={{
+              backgroundColor: "#151d26",
+              border: "1px solid #263545",
               borderRadius: "8px",
-              fontWeight: "bold",
+              padding: "1rem",
               marginBottom: "1rem"
-            }}
-          >
-            {summarizing ? "Summarizing..." : "Summarize"}
-          </button>
+            }}>
+              <div style={{ marginBottom: "0.75rem", color: "#8fa4bc", fontSize: "0.9rem" }}>
+                Read-Aloud Chunks ({ttsChunkCount || ttsChunks.length})
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", maxHeight: "280px", overflowY: "auto" }}>
+                {Array.from({ length: ttsChunkCount || ttsChunks.length }).map((_, idx) => {
+                  const chunkText = ttsChunks[idx] || `Chunk ${idx + 1} generating...`;
+                  const isActive = currentChunkIndex === idx;
+                  const isRead = currentChunkIndex !== null && idx < currentChunkIndex;
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        padding: "0.6rem 0.75rem",
+                        borderRadius: "8px",
+                        border: `1px solid ${isActive ? "#3ecfcf" : "#263545"}`,
+                        backgroundColor: isActive ? "rgba(62, 207, 207, 0.14)" : (isRead ? "#0e141b" : "#111923"),
+                        color: isActive ? "#e8f0f8" : "#b8c6d5",
+                        fontSize: "0.86rem",
+                        lineHeight: 1.5
+                      }}
+                    >
+                      {chunkText}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {ttsError && (
+            <div style={{ color: "#ffd0c0", backgroundColor: "#3c1c0f", padding: "0.75rem", borderRadius: "8px", marginBottom: "1rem" }}>
+              <strong>TTS: </strong>{ttsError}
+            </div>
+          )}
 
           {summaryText && (
             <div>
