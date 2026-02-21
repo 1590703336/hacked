@@ -796,12 +796,11 @@ export default function App() {
     // Electron IPC handlers
     if (window.electronAPI) {
       window.electronAPI.onScreenCaptured((base64Image) => {
+        speakFeedback("Screenshot captured. Uploading and processing now.");
         handleImageUpload(base64Image, "screenshot.png", "image/png");
       });
       window.electronAPI.onShortcutCapture(() => {
-        // Could trigger a UI element here if needed, 
-        // but main process handles the actual capture now.
-        console.log("Global shortcut triggered screen capture");
+        speakFeedback("Screenshot shortcut detected. Capturing screen.");
       });
     }
 
@@ -879,7 +878,7 @@ export default function App() {
     setTtsChunks([]);
     setCurrentChunkIndex(null);
     setTtsSourceLabel("");
-    speakFeedback("Processing document started.");
+    speakFeedback("File uploaded. Processing started.");
 
     try {
       // 1. Capture API
@@ -953,6 +952,7 @@ export default function App() {
       const combinedText = segments.join("");
       setResultText(combinedText);
       resultTextRef.current = combinedText;
+      speakFeedback("OCR processing finished. Document is ready.");
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -967,6 +967,7 @@ export default function App() {
     setError(null);
     setSummaryText("");
     summaryTextRef.current = "";
+    speakFeedback("Summary processing started.");
 
     try {
       const summarizeRes = await fetch("/api/summarize", {
@@ -984,6 +985,7 @@ export default function App() {
 
       setSummaryText(summarizeData.data);
       summaryTextRef.current = summarizeData.data;
+      speakFeedback("Summary processing finished.");
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -1023,7 +1025,7 @@ export default function App() {
         speakFeedback("Reading paused");
       }
     } else if (resultText) {
-      await speakFeedback("Starting to read document.");
+      await speakFeedback("OCR chunk processing started. Generating read aloud audio.");
       startReading(resultText, "ocr");
     } else {
       speakFeedback("No document is currently available to read.");
@@ -1041,7 +1043,7 @@ export default function App() {
         speakFeedback("Reading paused");
       }
     } else if (summaryText) {
-      await speakFeedback("Starting to read summary.");
+      await speakFeedback("Summary chunk processing started. Generating read aloud audio.");
       startReading(getSummaryReadableText(), "summary");
     } else {
       speakFeedback("No summary has been generated yet.");
@@ -1066,10 +1068,19 @@ export default function App() {
     }
   }, { enableOnFormTags: true });
 
+  useHotkeys('ctrl+shift+a, cmd+shift+a', async (e) => {
+    e.preventDefault();
+    if (window.electronAPI?.requestCapture) {
+      await speakFeedback("Screenshot shortcut triggered. Preparing capture.");
+      window.electronAPI.requestCapture();
+      return;
+    }
+    speakFeedback("Screenshot capture shortcut is available in the desktop app.");
+  }, { enableOnFormTags: true }, [speakFeedback]);
+
   useHotkeys('ctrl+s, cmd+s', (e) => {
     e.preventDefault();
     if (resultText && !summarizing) {
-      speakFeedback("Summarizing document.");
       handleSummarize();
     } else if (summarizing) {
       speakFeedback("Already summarizing.");
@@ -1099,9 +1110,8 @@ export default function App() {
     if (isReadingRef.current && !isPausedRef.current) {
       pauseReadingRef.current();
     }
-    const summaryInstruction = summaryText ? " Control L to read or pause summary." : "";
-    speakFeedback(`Shortcuts: Control K to read or pause document.${summaryInstruction} Control R to record a question. Control U to upload a file. Control S to summarize. Control Right or Left arrow to skip forward or backward 5 seconds.`);
-  }, { enableOnFormTags: true }, [summaryText]);
+    speakFeedback("Shortcuts: Control K to read or pause document. Control L to read or pause summary. Control R to record a question. Control Shift A to capture a screenshot and run OCR. Control U to upload a file. Control S to summarize. Control Right or Left arrow to skip forward or backward 5 seconds.");
+  }, { enableOnFormTags: true });
 
   // --- ACCESSIBILITY ANNOUNCEMENTS ---
   // Browsers block autoplay audio (including TTS) until a user interaction occurs.
@@ -1109,7 +1119,7 @@ export default function App() {
 
   useEffect(() => {
     if (resultText && !summaryText) {
-      speakFeedback("Document processed. Control S to summarize. Control K to read document aloud. Control R to ask a question.");
+      speakFeedback("Document processed. Control S to summarize. Control K to read document aloud. Control R to ask a question. Control Shift A to capture another screenshot.");
     }
   }, [resultText, summaryText, speakFeedback]);
 
@@ -1122,7 +1132,7 @@ export default function App() {
   const handleInitialInteraction = () => {
     if (!hasInteracted) {
       setHasInteracted(true);
-      speakFeedback("Application loaded. Shortcuts: Control U to upload a file. Control R to record a question. Control H to repeat instructions anytime.");
+      speakFeedback("Application loaded. Shortcuts: Control U to upload a file. Control Shift A to capture screenshot and run OCR. Control R to record a question. Control H to repeat instructions anytime.");
     }
   };
 
