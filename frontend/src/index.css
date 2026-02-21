@@ -1,1 +1,13 @@
 /* Global resets handled in App.css */
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* Allow inputs and buttons to still be clickable */
+input,
+button,
+textarea,
+.no-drag {
+  -webkit-app-region: no-drag;
+}

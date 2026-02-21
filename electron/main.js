@@ -1,11 +1,12 @@
 const { app, BrowserWindow, globalShortcut, desktopCapturer } = require('electron');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const isDev = process.env.NODE_ENV !== 'production';
 const FRONTEND_DEV_URL = 'http://localhost:5173';
-const BACKEND_URL = 'http://localhost:3001';
 
 let mainWindow;
+let backendProcess;
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -17,15 +18,18 @@ function createWindow() {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
+            webSecurity: false, // Help with local active development CORS
         },
-        titleBarStyle: 'hiddenInset',
+        titleBarStyle: 'hidden', // Changed from hiddenInset to just hidden for testing
         show: false,
+        backgroundColor: '#121b26' // Matches the App.jsx dark mode background
     });
 
     // Load frontend
     if (isDev) {
         mainWindow.loadURL(FRONTEND_DEV_URL);
-        mainWindow.webContents.openDevTools();
+        // Force open dev tools to debug why it's black
+        mainWindow.webContents.openDevTools({ mode: 'detach' });
     } else {
         mainWindow.loadFile(path.join(__dirname, '..', 'frontend', 'dist', 'index.html'));
     }
@@ -37,6 +41,20 @@ function createWindow() {
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
+}
+
+function startBackend() {
+    const backendDir = isDev
+        ? path.join(__dirname, '../backend')
+        : path.join(process.resourcesPath, 'backend'); // Assuming backend is copied here in prod
+
+    backendProcess = spawn('npm', ['run', 'dev'], {
+        cwd: backendDir,
+        shell: true,
+    });
+
+    backendProcess.stdout.on('data', (data) => console.log(`Backend: ${data}`));
+    backendProcess.stderr.on('data', (data) => console.error(`Backend Error: ${data}`));
 }
 
 function registerGlobalShortcuts() {
@@ -67,6 +85,7 @@ function registerGlobalShortcuts() {
 
 // App lifecycle
 app.whenReady().then(() => {
+    // startBackend(); // Let npm-run-all handle backend for now in development
     createWindow();
     registerGlobalShortcuts();
 
@@ -85,4 +104,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
     globalShortcut.unregisterAll();
+    if (backendProcess) {
+        backendProcess.kill();
+    }
 });

@@ -50,7 +50,7 @@ export default function App() {
   const recordingStreamRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const tutorAudioRef = useRef(null);
-  const togglePauseReadingRef = useRef(() => {});
+  const togglePauseReadingRef = useRef(() => { });
   const isReadingRef = useRef(false);
   const whisperTestRecorderRef = useRef(null);
   const whisperTestStreamRef = useRef(null);
@@ -64,7 +64,7 @@ export default function App() {
   const whisperTestMonitorTimerRef = useRef(null);
   const whisperTestPeakRef = useRef(0);
   const tutorStartedAtRef = useRef(0);
-  const unmountCleanupRef = useRef(() => {});
+  const unmountCleanupRef = useRef(() => { });
 
   const closeStream = () => {
     if (eventSourceRef.current) {
@@ -394,7 +394,7 @@ export default function App() {
       whisperTestMonitorAnalyserRef.current = null;
     }
     if (whisperTestMonitorAudioContextRef.current) {
-      whisperTestMonitorAudioContextRef.current.close().catch(() => {});
+      whisperTestMonitorAudioContextRef.current.close().catch(() => { });
       whisperTestMonitorAudioContextRef.current = null;
     }
     setMicLevel(0);
@@ -452,7 +452,7 @@ export default function App() {
       gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
       oscillator.stop(ctx.currentTime + 0.42);
       oscillator.onended = () => {
-        ctx.close().catch(() => {});
+        ctx.close().catch(() => { });
       };
     } catch (err) {
       console.error(err);
@@ -756,6 +756,19 @@ export default function App() {
     };
 
     window.addEventListener("keydown", onKeyDown);
+
+    // Electron IPC handlers
+    if (window.electronAPI) {
+      window.electronAPI.onScreenCaptured((base64Image) => {
+        handleImageUpload(base64Image, "screenshot.png", "image/png");
+      });
+      window.electronAPI.onShortcutCapture(() => {
+        // Could trigger a UI element here if needed, 
+        // but main process handles the actual capture now.
+        console.log("Global shortcut triggered screen capture");
+      });
+    }
+
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       if (eventSourceRef.current) {
@@ -784,6 +797,28 @@ export default function App() {
       }
     };
   }, [activePage]);
+
+  const handleImageUpload = (base64String, filename, mimeType) => {
+    // Convert base64 to Blob
+    const byteCharacters = atob(base64String);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const fileBlob = new Blob([byteArray], { type: mimeType });
+
+    // Create a File object
+    const newFile = new File([fileBlob], filename, { type: mimeType });
+    setFile(newFile);
+  };
+
+  // Trigger upload whenever setFile is called by the IPC capture
+  useEffect(() => {
+    if (file && file.name === "screenshot.png") {
+      handleUpload();
+    }
+  }, [file]);
 
   const handleUpload = async () => {
     if (!file) return;
@@ -1190,9 +1225,9 @@ export default function App() {
             border: "1px solid #263545",
             marginTop: "1rem",
             marginBottom: "1rem"
-              }}>
-                {resultText}
-              </pre>
+          }}>
+            {resultText}
+          </pre>
           <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
             <button
               onClick={handleSummarize}
