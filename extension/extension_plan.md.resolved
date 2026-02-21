@@ -1,0 +1,183 @@
+# Browser Extension Plan — AI Accessibility Assistant
+
+## What It Does
+
+A Chrome/Edge extension that works on **any webpage**. The user highlights text (or right-clicks), and the extension can:
+
+- 📖 **Read it aloud** (TTS via backend)
+- 🧠 **Summarize it** (Summarizer via backend)
+- 🎙️ **Ask the AI Tutor** a voice question about the content
+- 📸 **Capture a screenshot** of any page (OCR via backend)
+
+---
+
+## How a Browser Extension Works
+
+A browser extension has 3 main pieces:
+
+```
+extension/
+├── manifest.json        ← tells Chrome what the extension does & needs
+├── popup/
+│   ├── popup.html       ← the small UI that opens when you click the icon
+│   ├── popup.js         ← logic for the popup
+│   └── popup.css        ← styles
+├── content/
+│   └── content.js       ← injected into every webpage (reads page text, highlights)
+├── background/
+│   └── background.js    ← service worker (handles API calls, coordinates messages)
+└── icons/
+    └── icon128.png
+```
+
+### The 3 Pieces Explained
+
+| Piece | What it is | What it does in our app |
+|-------|-----------|------------------------|
+| **Popup** | The small window when you click the extension icon | Shows controls: Read Aloud, Summarize, Ask Tutor |
+| **Content Script** | JS injected into every tab | Grabs selected/page text, highlights sentences during TTS |
+| **Background Worker** | A persistent service worker | Makes all the `fetch()` calls to `localhost:3001/api` |
+
+> [!IMPORTANT]
+> Content scripts **cannot** directly call your backend (CORS). They pass messages to the **background worker**, which makes the actual API calls. This is the core architecture pattern.
+
+---
+
+## Message Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Popup
+    participant ContentScript
+    participant Background
+    participant Backend
+
+    User->>Popup: Clicks "Summarize"
+    Popup->>Background: chrome.runtime.sendMessage({ action: "summarize" })
+    Background->>ContentScript: chrome.tabs.sendMessage({ action: "getSelection" })
+    ContentScript-->>Background: { text: "selected text..." }
+    Background->>Backend: POST localhost:3001/api/summarize
+    Backend-->>Background: { takeaways: [...] }
+    Background-->>Popup: { success, takeaways }
+    Popup->>User: Shows summary UI
+```
+
+---
+
+## File Structure (in this repo)
+
+```
+Hacked 2026/
+├── backend/             ← existing Node.js API (unchanged)
+├── frontend/            ← existing React app (unchanged)
+└── extension/           ← NEW folder on agal-extension branch
+    ├── manifest.json
+    ├── popup/
+    │   ├── popup.html
+    │   ├── popup.js
+    │   └── popup.css
+    ├── content/
+    │   └── content.js
+    ├── background/
+    │   └── background.js
+    └── icons/
+        └── icon128.png
+```
+
+> [!NOTE]
+> The extension talks to the **same backend** (`localhost:3001/api`) as the React frontend. Zero backend changes needed.
+
+---
+
+## Backend Endpoints Used
+
+| Feature | Endpoint | Notes |
+|---------|----------|-------|
+| Read Aloud | `POST /api/tts/synthesize` | Returns mp3 audio |
+| Summarize | `POST /api/summarize` | Returns takeaways[] |
+| Ask Tutor | `POST /api/tutor/ask` | Returns answer text |
+| Voice Question | `POST /api/tutor/transcribe` | Sends mic audio → text |
+| Screenshot OCR | `POST /api/ocr` | Sends base64 screenshot |
+
+---
+
+## The Popup UI
+
+```
+┌─────────────────────────────────┐
+│  🧠 AI Accessibility Assistant  │
+│─────────────────────────────────│
+│  Selected: "Newton's first law…"│
+│  (24 words)                     │
+│─────────────────────────────────│
+│  [ ▶ Read Aloud ]               │
+│  [ 🧠 Summarize ]               │
+│  [ 🎙️ Ask Tutor ]               │
+│  [ 📸 Capture Screen ]          │
+│─────────────────────────────────│
+│  ● Backend: Connected ✓         │
+└─────────────────────────────────┘
+```
+
+---
+
+## CORS — The Key Problem to Solve
+
+The backend needs to allow requests from the extension's origin. Add this to the Express server:
+
+```js
+// backend/src/index.js — add to existing CORS config
+app.use(cors({
+  origin: [
+    "http://localhost:5173",          // React frontend
+    /chrome-extension:\/\/.*/         // ← add this for the extension
+  ]
+}));
+```
+
+---
+
+## Build Phases
+
+### Phase 1 — Skeleton (can test immediately)
+- `manifest.json` with correct permissions
+- `popup.html` with buttons (no logic yet)
+- `background.js` with backend health check
+- Load into Chrome → verify icon appears
+
+### Phase 2 — Core Features
+- Get selected text from page via content script
+- Hook up Summarize button → shows takeaways in popup
+- Hook up Read Aloud → plays TTS audio in tab
+
+### Phase 3 — Voice & Screenshot
+- Mic recording in popup → Tutor transcription
+- Screenshot via `chrome.tabs.captureVisibleTab()` → OCR
+
+---
+
+## How to Load It in Chrome (Dev Mode)
+
+1. Go to `chrome://extensions`
+2. Enable **Developer Mode** (top right toggle)
+3. Click **Load unpacked**
+4. Select the `extension/` folder
+5. Pin it to the toolbar
+
+> [!WARNING]
+> The extension only works while the backend is running (`npm run dev` in `/backend`). If the backend is off, API calls will fail gracefully with an error message in the popup.
+
+---
+
+## Permissions Needed (manifest.json)
+
+```json
+"permissions": [
+  "activeTab",       ← read current tab's text
+  "scripting",       ← inject content.js
+  "storage",         ← save settings
+  "tabs",            ← capture screenshots
+  "microphone"       ← record voice questions
+]
+```
