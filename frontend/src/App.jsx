@@ -48,6 +48,8 @@ export default function App() {
   const isPausedRef = useRef(false);
   const streamDoneRef = useRef(false);
   const tutorMessagesRef = useRef([]);
+  const resultTextRef = useRef("");
+  const summaryTextRef = useRef("");
   const mediaRecorderRef = useRef(null);
   const recordingStreamRef = useRef(null);
   const recordedChunksRef = useRef([]);
@@ -70,6 +72,7 @@ export default function App() {
   const tutorStartedAtRef = useRef(0);
   const unmountCleanupRef = useRef(() => { });
   const fileInputRef = useRef(null);
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const speakFeedback = useCallback((text) => {
     return new Promise((resolve) => {
@@ -332,24 +335,26 @@ export default function App() {
     };
   };
 
-  const getSummaryReadableText = () => {
-    if (!summaryText) return "";
-    if (typeof summaryText === "string") return summaryText;
-    if (Array.isArray(summaryText.takeaways)) {
-      return summaryText.takeaways
+  const getSummaryReadableText = (summaryInput = summaryText) => {
+    if (!summaryInput) return "";
+    if (typeof summaryInput === "string") return summaryInput;
+    if (Array.isArray(summaryInput.takeaways)) {
+      return summaryInput.takeaways
         .map((point, idx) => `${idx + 1}. ${point}`)
         .join("\n");
     }
-    return JSON.stringify(summaryText, null, 2);
+    return JSON.stringify(summaryInput, null, 2);
   };
 
   const getCurrentReadingText = () => {
+    const latestResultText = resultTextRef.current;
+    const latestSummaryText = summaryTextRef.current;
     let context = "";
-    if (resultText) {
-      context += `[DOCUMENT TEXT]\n${resultText}\n\n`;
+    if (latestResultText) {
+      context += `[DOCUMENT TEXT]\n${latestResultText}\n\n`;
     }
-    if (summaryText) {
-      context += `[SUMMARY]\n${getSummaryReadableText()}\n\n`;
+    if (latestSummaryText) {
+      context += `[SUMMARY]\n${getSummaryReadableText(latestSummaryText)}\n\n`;
     }
     return context.trim() || "(no content available)";
   };
@@ -680,14 +685,19 @@ export default function App() {
     setIsRecording(false);
   };
 
-  const startRecordingQuestion = async () => {
+  const startRecordingQuestion = async ({ announce = false } = {}) => {
     if (isRecording || isTranscribing || isTutorThinking) return;
     try {
       setTutorError(null);
-      if (isReading && !isPausedRef.current) {
-        pauseReading();
+      if (isReadingRef.current && !isPausedRef.current) {
+        pauseReadingRef.current();
       }
       stopTutorAnswerAudio();
+      window.speechSynthesis.cancel();
+      if (announce) {
+        await speakFeedback("Recording started. Please speak your question.");
+        await delay(150);
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       recordingStreamRef.current = stream;
       const recorder = buildRecorder(stream);
@@ -745,6 +755,14 @@ export default function App() {
   useEffect(() => {
     tutorMessagesRef.current = tutorMessages;
   }, [tutorMessages]);
+
+  useEffect(() => {
+    resultTextRef.current = resultText;
+  }, [resultText]);
+
+  useEffect(() => {
+    summaryTextRef.current = summaryText;
+  }, [summaryText]);
 
   useEffect(() => {
     togglePauseReadingRef.current = togglePauseReading;
@@ -852,8 +870,10 @@ export default function App() {
     setError(null);
     setTtsError(null);
     setResultText("");
+    resultTextRef.current = "";
     setShowOcrText(false);
     setSummaryText("");
+    summaryTextRef.current = "";
     setProcessedImages([]);
     setTtsChunkCount(0);
     setTtsChunks([]);
@@ -932,6 +952,7 @@ export default function App() {
       await Promise.all(workers);
       const combinedText = segments.join("");
       setResultText(combinedText);
+      resultTextRef.current = combinedText;
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -945,6 +966,7 @@ export default function App() {
     setSummarizing(true);
     setError(null);
     setSummaryText("");
+    summaryTextRef.current = "";
 
     try {
       const summarizeRes = await fetch("/api/summarize", {
@@ -961,6 +983,7 @@ export default function App() {
       }
 
       setSummaryText(summarizeData.data);
+      summaryTextRef.current = summarizeData.data;
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -1025,16 +1048,15 @@ export default function App() {
     }
   }, { enableOnFormTags: true }, [summaryText, isReadingRef, isPausedRef, readingTarget]);
 
-  useHotkeys('ctrl+r, cmd+r', (e) => {
+  useHotkeys('ctrl+r, cmd+r', async (e) => {
     e.preventDefault();
     if (isRecording) {
       stopRecordingQuestion();
-      speakFeedback("Recording stopped. Processing.");
+      await speakFeedback("Recording stopped. Processing.");
     } else {
-      startRecordingQuestion();
-      speakFeedback("Recording started. Please speak your question.");
+      await startRecordingQuestion({ announce: true });
     }
-  }, { enableOnFormTags: true }, [isRecording]);
+  }, { enableOnFormTags: true }, [isRecording, startRecordingQuestion, stopRecordingQuestion, speakFeedback]);
 
   useHotkeys('ctrl+u, cmd+u', (e) => {
     e.preventDefault();
