@@ -72,30 +72,18 @@ export default function App() {
   const tutorStartedAtRef = useRef(0);
   const unmountCleanupRef = useRef(() => { });
   const fileInputRef = useRef(null);
-  const feedbackQueueRef = useRef(Promise.resolve());
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const speakFeedback = useCallback((text, options = {}) => {
-    const { interrupt = false } = options;
-    if (!text) return Promise.resolve();
-    if (!window.speechSynthesis) return Promise.resolve();
-
-    if (interrupt) {
+  const speakFeedback = useCallback((text) => {
+    return new Promise((resolve) => {
+      if (!text) return resolve();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.onend = resolve;
+      // Also resolve on error so we don't hang if TTS fails
+      utterance.onerror = resolve;
       window.speechSynthesis.cancel();
-      feedbackQueueRef.current = Promise.resolve();
-    }
-
-    feedbackQueueRef.current = feedbackQueueRef.current
-      .catch(() => { })
-      .then(() => new Promise((resolve) => {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.onend = resolve;
-        // Also resolve on error so we don't hang if TTS fails
-        utterance.onerror = resolve;
-        window.speechSynthesis.speak(utterance);
-      }));
-
-    return feedbackQueueRef.current;
+      window.speechSynthesis.speak(utterance);
+    });
   }, []);
 
   const closeStream = () => {
@@ -707,7 +695,7 @@ export default function App() {
       stopTutorAnswerAudio();
       window.speechSynthesis.cancel();
       if (announce) {
-        await speakFeedback("Recording started. Please speak your question.", { interrupt: true });
+        await speakFeedback("Recording started. Please speak your question.");
         await delay(150);
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -788,8 +776,6 @@ export default function App() {
   useEffect(() => {
     unmountCleanupRef.current = () => {
       stopTutorAnswerAudio();
-      window.speechSynthesis.cancel();
-      feedbackQueueRef.current = Promise.resolve();
       releaseRecorder();
       releaseWhisperTestRecorder();
       clearWhisperTestPlayback();
@@ -1032,14 +1018,14 @@ export default function App() {
     e.preventDefault();
     if (isReadingRef.current && readingTarget === "ocr") {
       if (isPausedRef.current) {
-        await speakFeedback("Reading resumed", { interrupt: true });
+        await speakFeedback("Reading resumed");
         togglePauseReadingRef.current();
       } else {
         togglePauseReadingRef.current();
         speakFeedback("Reading paused");
       }
     } else if (resultText) {
-      await speakFeedback("OCR chunk processing started. Generating read aloud audio.", { interrupt: true });
+      await speakFeedback("OCR chunk processing started. Generating read aloud audio.");
       startReading(resultText, "ocr");
     } else {
       speakFeedback("No document is currently available to read.");
@@ -1050,14 +1036,14 @@ export default function App() {
     e.preventDefault();
     if (isReadingRef.current && readingTarget === "summary") {
       if (isPausedRef.current) {
-        await speakFeedback("Reading resumed", { interrupt: true });
+        await speakFeedback("Reading resumed");
         togglePauseReadingRef.current();
       } else {
         togglePauseReadingRef.current();
         speakFeedback("Reading paused");
       }
     } else if (summaryText) {
-      await speakFeedback("Summary chunk processing started. Generating read aloud audio.", { interrupt: true });
+      await speakFeedback("Summary chunk processing started. Generating read aloud audio.");
       startReading(getSummaryReadableText(), "summary");
     } else {
       speakFeedback("No summary has been generated yet.");
@@ -1085,7 +1071,7 @@ export default function App() {
   useHotkeys('ctrl+shift+a, cmd+shift+a', async (e) => {
     e.preventDefault();
     if (window.electronAPI?.requestCapture) {
-      speakFeedback("Screenshot shortcut triggered. Preparing capture.", { interrupt: true });
+      await speakFeedback("Screenshot shortcut triggered. Preparing capture.");
       window.electronAPI.requestCapture();
       return;
     }
