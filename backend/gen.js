@@ -1,0 +1,10 @@
+const PDFDocument = require('pdfkit');
+const fs = require('fs');
+const doc = new PDFDocument();
+doc.pipe(fs.createWriteStream('multi.pdf'));
+doc.fontSize(25).text('Page 1 Content Here', 100, 100);
+doc.addPage();
+doc.fontSize(25).text('Page 2 Content Here', 100, 100);
+doc.addPage();
+doc.fontSize(25).text('Page 3 Content Here', 100, 100);
+doc.end();

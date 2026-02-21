@@ -10,7 +10,7 @@ const openrouter = new OpenAI({
 /**
  * Summarize text into plain-English key takeaways.
  * @param {string} text - The text to summarize
- * @param {number} maxTakeaways - Max number of takeaways (default 3)
+ * @param {number} maxTakeaways3 - Max number of takeaways (default 3)
  * @returns {object} summary result
  */
 async function summarize(text, maxTakeaways = 3) {
@@ -23,15 +23,18 @@ async function summarize(text, maxTakeaways = 3) {
         messages: [
             {
                 role: 'system',
-                content: `You are a TL;DR summarizer for students with cognitive accessibility needs. Output at most ${maxTakeaways} key takeaways using strictly plain English (Flesch-Kincaid Grade Level 6-8). Avoid all academic jargon, nested clauses, and complex vocabulary. Output strictly as a JSON array of strings: ["Takeaway 1", "Takeaway 2"].`,
+                content: `You are a detailed educational summarizer for students with cognitive accessibility needs. Output at most ${maxTakeaways} highly comprehensive key takeaways. Each takeaway should be a detailed, multi-sentence explanation that thoroughly covers the core concept rather than just a brief sentence. Use strictly plain English (Flesch-Kincaid Grade Level 6-8) to ensure it is very easy to read. Avoid all dense academic jargon, nested clauses, and complex vocabulary, but do not sacrifice depth of explanation. Output ONLY a valid JSON array of strings: ["Detailed explanation...", "Detailed explanation..."]. Do not use markdown block formatting like \`\`\`json.`,
             },
             { role: 'user', content: text },
         ],
         temperature: 0.3,
-        max_tokens: 500,
+        max_tokens: 1500,
     });
 
-    const raw = response.choices[0]?.message?.content || '[]';
+    let raw = response.choices[0]?.message?.content || '[]';
+
+    // Strip markdown code block if present
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
     let takeaways = [];
     try {
@@ -41,10 +44,11 @@ async function summarize(text, maxTakeaways = 3) {
         }
     } catch (e) {
         // Fallback gracefully if model fails JSON
+        console.error("Failed to parse JSON:", raw, e);
         takeaways = raw
             .split('\n')
-            .map((line) => line.replace(/^[\s\d]+[.)]\s*|^[-–•]\s*/u, '').trim())
-            .filter((line) => line.length > 0)
+            .map((line) => line.replace(/^([`\[\]",]|\s)*([\s\d]+[.)]\s*|[-–•]\s*)?/ug, '').trim())
+            .filter((line) => line.length > 5)
             .slice(0, maxTakeaways);
     }
 
