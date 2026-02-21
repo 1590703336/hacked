@@ -16,6 +16,7 @@ export default function App() {
   const [ttsChunkCount, setTtsChunkCount] = useState(0);
   const [ttsChunks, setTtsChunks] = useState([]);
   const [currentChunkIndex, setCurrentChunkIndex] = useState(null);
+  const [ttsSpeed, setTtsSpeed] = useState(1.0);
   const [readingTarget, setReadingTarget] = useState(null);
   const [ttsSourceLabel, setTtsSourceLabel] = useState("");
   const [tutorMessages, setTutorMessages] = useState([]);
@@ -36,6 +37,7 @@ export default function App() {
   const [micLevel, setMicLevel] = useState(0);
   const [micPeak, setMicPeak] = useState(0);
   const OCR_CONCURRENCY = 3;
+  const TTS_SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0];
 
   const eventSourceRef = useRef(null);
   const audioQueueRef = useRef([]);
@@ -251,7 +253,10 @@ export default function App() {
     setTtsSourceLabel(target === "summary" ? "Summary" : "OCR Result");
     streamDoneRef.current = false;
 
-    const params = new URLSearchParams({ markdown: textToRead });
+    const params = new URLSearchParams({
+      markdown: textToRead,
+      speed: String(ttsSpeed),
+    });
     const stream = new EventSource(`/api/tts/stream?${params.toString()}`);
     eventSourceRef.current = stream;
     setIsReading(true);
@@ -623,7 +628,7 @@ export default function App() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text: answerText }),
+      body: JSON.stringify({ text: answerText, speed: ttsSpeed }),
     });
     if (!ttsRes.ok) {
       const fallback = await ttsRes.text();
@@ -1252,6 +1257,34 @@ export default function App() {
                 </button>
               </>
             )}
+          </div>
+
+          <div style={{ marginBottom: "1rem" }}>
+            <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.35rem" }}>
+              TTS Speed: {ttsSpeed.toFixed(2)}x
+            </div>
+            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+              {TTS_SPEED_OPTIONS.map((speedOption) => {
+                const active = Math.abs(ttsSpeed - speedOption) < 0.001;
+                return (
+                  <button
+                    key={speedOption}
+                    onClick={() => setTtsSpeed(speedOption)}
+                    style={{
+                      padding: "0.35rem 0.6rem",
+                      borderRadius: "7px",
+                      border: `1px solid ${active ? "#3ecfcf" : "#3c5268"}`,
+                      backgroundColor: active ? "rgba(62,207,207,0.14)" : "#1b2938",
+                      color: active ? "#e8f0f8" : "#d3dfeb",
+                      fontWeight: "bold",
+                      fontSize: "0.78rem",
+                    }}
+                  >
+                    {speedOption}x
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {(isReading || ttsChunkCount > 0 || ttsChunks.length > 0) && (
