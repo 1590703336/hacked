@@ -7,12 +7,15 @@ export default function App() {
   const [error, setError] = useState(null);
   const [resultText, setResultText] = useState("");
   const [processedImages, setProcessedImages] = useState([]);
+  const [summaryText, setSummaryText] = useState("");
+  const [summarizing, setSummarizing] = useState(false);
 
   const handleUpload = async () => {
     if (!file) return;
     setLoading(true);
     setError(null);
     setResultText("");
+    setSummaryText("");
     setProcessedImages([]);
 
     try {
@@ -73,6 +76,35 @@ export default function App() {
     }
   };
 
+  const handleSummarize = async () => {
+    if (!resultText) return;
+    setSummarizing(true);
+    setError(null);
+    setSummaryText("");
+
+    try {
+      const summarizeRes = await fetch("/api/summarize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: resultText }),
+      });
+
+      const summarizeData = await summarizeRes.json();
+      if (!summarizeData.success) {
+        throw new Error(summarizeData.message || "Summarize API failed");
+      }
+
+      setSummaryText(summarizeData.data);
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
+    } finally {
+      setSummarizing(false);
+    }
+  };
+
   return (
     <div style={{ padding: "2rem", maxWidth: "800px", margin: "0 auto", fontFamily: "sans-serif" }}>
       <h1>Simple Upload & OCR</h1>
@@ -115,10 +147,53 @@ export default function App() {
             padding: "1.5rem",
             borderRadius: "8px",
             border: "1px solid #263545",
-            marginTop: "1rem"
+            marginTop: "1rem",
+            marginBottom: "1rem"
           }}>
             {resultText}
           </pre>
+          <button
+            onClick={handleSummarize}
+            disabled={summarizing}
+            style={{
+              padding: "0.5rem 1rem",
+              cursor: summarizing ? "not-allowed" : "pointer",
+              backgroundColor: "#fcba03",
+              color: "#080b0f",
+              border: "none",
+              borderRadius: "8px",
+              fontWeight: "bold",
+              marginBottom: "1rem"
+            }}
+          >
+            {summarizing ? "Summarizing..." : "Summarize"}
+          </button>
+
+          {summaryText && (
+            <div>
+              <h3>Summary</h3>
+              <div style={{
+                backgroundColor: "#2a3b4c",
+                color: "#e8f0f8",
+                padding: "1.5rem",
+                borderRadius: "8px",
+                border: "1px solid #3c5268",
+                marginTop: "0.5rem"
+              }}>
+                {summaryText.takeaways ? (
+                  <ul style={{ margin: 0, paddingLeft: "1.5rem" }}>
+                    {summaryText.takeaways.map((point, i) => (
+                      <li key={i} style={{ marginBottom: "0.5rem", lineHeight: "1.5" }}>{point}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                    {JSON.stringify(summaryText, null, 2)}
+                  </pre>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
