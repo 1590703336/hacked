@@ -59,6 +59,9 @@ async function transcribeAudio(file) {
     if (!file) {
         throw new ValidationError('No audio file provided');
     }
+    if (!file.size || file.size < 2048) {
+        throw new ValidationError('Audio too short or silent. Please record for at least 1 second and speak closer to the microphone.');
+    }
 
     // Write buffer to a temp file for the Whisper API, preserving the file extension so OpenAI accepts it
     const ext = file.originalname ? path.extname(file.originalname) : '.webm';
@@ -69,7 +72,7 @@ async function transcribeAudio(file) {
         const transcription = await openai.audio.transcriptions.create({
             file: fs.createReadStream(tempPath),
             model: 'whisper-1',
-            language: 'en',
+            temperature: 0,
         });
 
         return {
