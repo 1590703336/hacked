@@ -74,16 +74,35 @@ export default function App() {
   const fileInputRef = useRef(null);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const speakFeedback = useCallback((text) => {
-    return new Promise((resolve) => {
-      if (!text) return resolve();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.onend = resolve;
-      // Also resolve on error so we don't hang if TTS fails
-      utterance.onerror = resolve;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
-    });
+  const speakFeedbackAudioRef = useRef(null);
+
+  const speakFeedback = useCallback(async (text) => {
+    if (!text) return;
+    // Interrupt any currently-playing feedback announcement
+    if (speakFeedbackAudioRef.current) {
+      speakFeedbackAudioRef.current.pause();
+      speakFeedbackAudioRef.current = null;
+    }
+    try {
+      const res = await fetch("/api/tts/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, speed: 1.0 }),
+      });
+      if (!res.ok) return; // silent fail — never block the UI
+      const buffer = await res.arrayBuffer();
+      const blob = new Blob([buffer], { type: "audio/mpeg" });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      speakFeedbackAudioRef.current = audio;
+      await new Promise((resolve) => {
+        audio.onended = () => { URL.revokeObjectURL(url); speakFeedbackAudioRef.current = null; resolve(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); speakFeedbackAudioRef.current = null; resolve(); };
+        audio.play().catch(() => { URL.revokeObjectURL(url); speakFeedbackAudioRef.current = null; resolve(); });
+      });
+    } catch {
+      // Never hang on TTS failure
+    }
   }, []);
 
   const closeStream = () => {
@@ -695,7 +714,6 @@ export default function App() {
         pauseReadingRef.current();
       }
       stopTutorAnswerAudio();
-      window.speechSynthesis.cancel();
       if (announce) {
         await speakFeedback("Recording started. Please speak your question.");
         await delay(150);
