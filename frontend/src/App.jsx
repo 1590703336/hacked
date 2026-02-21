@@ -1091,21 +1091,7 @@ export default function App() {
     }
   }, { enableOnFormTags: true }, [resultText, summarizing]);
 
-  useHotkeys('ctrl+right, cmd+right', (e) => {
-    e.preventDefault();
-    if (isReadingRef.current && currentAudioRef.current) {
-      currentAudioRef.current.currentTime += 5; // Fast forward 5 seconds
-      speakFeedback("Skipping forward 5 seconds");
-    }
-  }, { enableOnFormTags: true });
 
-  useHotkeys('ctrl+left, cmd+left', (e) => {
-    e.preventDefault();
-    if (isReadingRef.current && currentAudioRef.current) {
-      currentAudioRef.current.currentTime = Math.max(0, currentAudioRef.current.currentTime - 5);
-      speakFeedback("Rewinding 5 seconds");
-    }
-  }, { enableOnFormTags: true });
 
   useHotkeys('ctrl+h, cmd+h', (e) => {
     e.preventDefault();
@@ -1134,7 +1120,7 @@ export default function App() {
   const handleInitialInteraction = () => {
     if (!hasInteracted) {
       setHasInteracted(true);
-      speakFeedback("Application loaded. Shortcuts: Control U to upload a file. Control Shift A to capture screenshot and run OCR. Control R to record a question. Control H to repeat instructions anytime.");
+      speakFeedback("Application loaded. Shortcuts: Control U to upload a file. Control Shift A to capture screenshot and run OCR. Control H to repeat instructions anytime.");
     }
   };
 
