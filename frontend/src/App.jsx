@@ -1098,7 +1098,7 @@ export default function App() {
     if (isReadingRef.current && !isPausedRef.current) {
       pauseReadingRef.current();
     }
-    speakFeedback("Shortcuts: Control K to read or pause document. Control L to read or pause summary. Control R to record a question. Control Shift A to capture a screenshot and run OCR. Control U to upload a file. Control S to summarize. Control Right or Left arrow to skip forward or backward 5 seconds.");
+    speakFeedback("Shortcuts: Control K to read or pause document. Control L to read or pause summary. Control R to record a question. Control Shift A to capture a screenshot and run OCR. Control U to upload a file. Control S to summarize.");
   }, { enableOnFormTags: true });
 
   // --- ACCESSIBILITY ANNOUNCEMENTS ---
