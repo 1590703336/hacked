@@ -72,10 +72,15 @@ export default function App() {
   const fileInputRef = useRef(null);
 
   const speakFeedback = useCallback((text) => {
-    if (!text) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
+    return new Promise((resolve) => {
+      if (!text) return resolve();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.onend = resolve;
+      // Also resolve on error so we don't hang if TTS fails
+      utterance.onerror = resolve;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
+    });
   }, []);
 
   const closeStream = () => {
@@ -339,10 +344,14 @@ export default function App() {
   };
 
   const getCurrentReadingText = () => {
-    if (readingTarget === "summary") return getSummaryReadableText();
-    if (readingTarget === "ocr") return resultText;
-    if (summaryText) return getSummaryReadableText();
-    return resultText;
+    let context = "";
+    if (resultText) {
+      context += `[DOCUMENT TEXT]\n${resultText}\n\n`;
+    }
+    if (summaryText) {
+      context += `[SUMMARY]\n${getSummaryReadableText()}\n\n`;
+    }
+    return context.trim() || "(no content available)";
   };
 
   const addTutorMessage = (role, text) => {
@@ -650,6 +659,7 @@ export default function App() {
     const audioBlob = new Blob([audioBuffer], { type: "audio/mpeg" });
     const audioUrl = URL.createObjectURL(audioBlob);
     stopTutorAnswerAudio();
+    stopReading(); // Ensuring background TTS stops before Tutor speaks
     const answerAudio = new Audio(audioUrl);
     tutorAudioRef.current = answerAudio;
     answerAudio.onended = () => {
@@ -842,12 +852,14 @@ export default function App() {
     setError(null);
     setTtsError(null);
     setResultText("");
+    setShowOcrText(false);
     setSummaryText("");
     setProcessedImages([]);
     setTtsChunkCount(0);
     setTtsChunks([]);
     setCurrentChunkIndex(null);
     setTtsSourceLabel("");
+    speakFeedback("Processing document started.");
 
     try {
       // 1. Capture API
@@ -977,21 +989,41 @@ export default function App() {
   };
 
   // --- HOTKEYS ---
-  useHotkeys('ctrl+k, cmd+k', (e) => {
+  useHotkeys('ctrl+k, cmd+k', async (e) => {
     e.preventDefault();
-    if (isReadingRef.current) {
-      togglePauseReadingRef.current();
-      speakFeedback(isPausedRef.current ? "Reading paused" : "Reading resumed");
-    } else if (summaryText) {
-      speakFeedback("Starting to read summary.");
-      startReading(getSummaryReadableText(), "summary");
+    if (isReadingRef.current && readingTarget === "ocr") {
+      if (isPausedRef.current) {
+        await speakFeedback("Reading resumed");
+        togglePauseReadingRef.current();
+      } else {
+        togglePauseReadingRef.current();
+        speakFeedback("Reading paused");
+      }
     } else if (resultText) {
-      speakFeedback("Starting to read document.");
+      await speakFeedback("Starting to read document.");
       startReading(resultText, "ocr");
     } else {
-      speakFeedback("Nothing is currently being read");
+      speakFeedback("No document is currently available to read.");
     }
-  }, { enableOnFormTags: true }, [summaryText, resultText, isReadingRef, isPausedRef]);
+  }, { enableOnFormTags: true }, [resultText, isReadingRef, isPausedRef, readingTarget]);
+
+  useHotkeys('ctrl+l, cmd+l', async (e) => {
+    e.preventDefault();
+    if (isReadingRef.current && readingTarget === "summary") {
+      if (isPausedRef.current) {
+        await speakFeedback("Reading resumed");
+        togglePauseReadingRef.current();
+      } else {
+        togglePauseReadingRef.current();
+        speakFeedback("Reading paused");
+      }
+    } else if (summaryText) {
+      await speakFeedback("Starting to read summary.");
+      startReading(getSummaryReadableText(), "summary");
+    } else {
+      speakFeedback("No summary has been generated yet.");
+    }
+  }, { enableOnFormTags: true }, [summaryText, isReadingRef, isPausedRef, readingTarget]);
 
   useHotkeys('ctrl+r, cmd+r', (e) => {
     e.preventDefault();
@@ -1045,7 +1077,7 @@ export default function App() {
     if (isReadingRef.current && !isPausedRef.current) {
       pauseReadingRef.current();
     }
-    speakFeedback("Shortcuts: Control K to play or pause reading. Control R to record a question. Control U to upload a file. Control S to summarize. Control Right or Left arrow to skip forward or backward 5 seconds.");
+    speakFeedback("Shortcuts: Control K to read or pause document. Control L to read or pause summary. Control R to record a question. Control U to upload a file. Control S to summarize. Control Right or Left arrow to skip forward or backward 5 seconds.");
   }, { enableOnFormTags: true });
 
   // --- ACCESSIBILITY ANNOUNCEMENTS ---
@@ -1054,13 +1086,13 @@ export default function App() {
 
   useEffect(() => {
     if (resultText && !summaryText) {
-      speakFeedback("Document processed. Control S to summarize. Control K to read aloud. Control R to ask a question.");
+      speakFeedback("Document processed. Control S to summarize. Control K to read document aloud. Control R to ask a question.");
     }
   }, [resultText, summaryText, speakFeedback]);
 
   useEffect(() => {
     if (summaryText) {
-      speakFeedback("Summary generated. Control K to read aloud.");
+      speakFeedback("Summary generated. Control L to read summary aloud.");
     }
   }, [summaryText, speakFeedback]);
 
