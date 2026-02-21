@@ -798,11 +798,9 @@ export default function App() {
     // Electron IPC handlers
     if (window.electronAPI) {
       window.electronAPI.onScreenCaptured((base64Image) => {
-        speakFeedback("Screenshot captured. Uploading and processing now.");
         handleImageUpload(base64Image, "screenshot.png", "image/png");
       });
       window.electronAPI.onShortcutCapture(() => {
-        speakFeedback("Screenshot shortcut detected. Capturing screen.");
       });
     }
 
@@ -880,7 +878,12 @@ export default function App() {
     setTtsChunks([]);
     setCurrentChunkIndex(null);
     setTtsSourceLabel("");
-    speakFeedback("File uploaded. Processing started.");
+
+    if (file.name === "screenshot.png") {
+      speakFeedback("Screenshot captured. Uploading and processing now.");
+    } else {
+      speakFeedback("Uploading and processing now.");
+    }
 
     try {
       // 1. Capture API
@@ -1073,11 +1076,9 @@ export default function App() {
   useHotkeys('ctrl+shift+a, cmd+shift+a', async (e) => {
     e.preventDefault();
     if (window.electronAPI?.requestCapture) {
-      await speakFeedback("Screenshot shortcut triggered. Preparing capture.");
       window.electronAPI.requestCapture();
       return;
     }
-    speakFeedback("Screenshot capture shortcut is available in the desktop app.");
   }, { enableOnFormTags: true }, [speakFeedback]);
 
   useHotkeys('ctrl+s, cmd+s', (e) => {
