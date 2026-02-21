@@ -72,6 +72,8 @@ async function transcribeAudio(file) {
         const transcription = await openai.audio.transcriptions.create({
             file: fs.createReadStream(tempPath),
             model: 'whisper-1',
+            // Force Whisper decoding to English regardless of input locale.
+            language: 'en',
             temperature: 0,
         });
 

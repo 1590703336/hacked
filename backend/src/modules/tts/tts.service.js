@@ -14,9 +14,13 @@ const openrouter = new OpenAI({
     apiKey: config.openRouterApiKey,
 });
 
-// Cache up to 500 TTS chunks (approx 50MB of audio in memory) to save API calls
 const ttsCache = new LRUCache({
     max: 500,
+});
+
+// Cache for semantic chunking to avoid re-calling OpenAI and ensure identical text generates identical chunks
+const chunkCache = new LRUCache({
+    max: 100, // cache up to 100 documents
 });
 
 /**
@@ -79,6 +83,12 @@ async function semanticChunk(markdown) {
         throw new ValidationError('markdown is required');
     }
 
+    const cacheKey = crypto.createHash('md5').update(markdown).digest('hex');
+    const cachedChunks = chunkCache.get(cacheKey);
+    if (cachedChunks) {
+        return cachedChunks;
+    }
+
     // 1. Pre-process obvious LaTeX to ease the GPT chunking burden
     let processedText = markdown
         .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1 over $2') // \frac{a}{b} -> a over b
@@ -113,13 +123,18 @@ async function semanticChunk(markdown) {
             parsed = JSON.parse(content);
         } catch (parseError) {
             console.warn('Failed to parse GPT chunk response, falling back to naive split:', parseError);
-            return markdown.split(/(?<=[.!?])\s+/).filter((c) => c.trim().length > 0);
+            const fallbackChunks = markdown.split(/(?<=[.!?])\s+/).filter((c) => c.trim().length > 0);
+            chunkCache.set(cacheKey, fallbackChunks);
+            return fallbackChunks;
         }
 
         if (!parsed.chunks || !Array.isArray(parsed.chunks)) {
-            return markdown.split(/(?<=[.!?])\s+/).filter((c) => c.trim().length > 0);
+            const fallbackChunks = markdown.split(/(?<=[.!?])\s+/).filter((c) => c.trim().length > 0);
+            chunkCache.set(cacheKey, fallbackChunks);
+            return fallbackChunks;
         }
 
+        chunkCache.set(cacheKey, parsed.chunks);
         return parsed.chunks;
     } catch (error) {
         console.error('Semantic Chunking Error:', error);

@@ -664,7 +664,9 @@ export default function App() {
     const audioBlob = new Blob([audioBuffer], { type: "audio/mpeg" });
     const audioUrl = URL.createObjectURL(audioBlob);
     stopTutorAnswerAudio();
-    stopReading(); // Ensuring background TTS stops before Tutor speaks
+    if (isReadingRef.current && !isPausedRef.current) {
+      pauseReadingRef.current(); // Ensuring background TTS pauses before Tutor speaks
+    }
     const answerAudio = new Audio(audioUrl);
     tutorAudioRef.current = answerAudio;
     answerAudio.onended = () => {
