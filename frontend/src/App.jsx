@@ -1408,6 +1408,27 @@ export default function App() {
         <div>
           <h2>Document Processed</h2>
 
+          {processedImages && processedImages.length > 0 && (
+            <div style={{ marginBottom: "1.5rem" }}>
+              <h3 style={{ marginBottom: "0.5rem" }}>Images (Screenshots/Uploads)</h3>
+              <div style={{ display: "flex", gap: "1rem", overflowX: "auto", paddingBottom: "0.5rem" }}>
+                {processedImages.map((base64Img, idx) => (
+                  <img
+                    key={idx}
+                    src={`data:image/png;base64,${base64Img}`}
+                    alt={`Processed document page ${idx + 1}`}
+                    style={{
+                      maxHeight: "300px",
+                      borderRadius: "8px",
+                      border: "1px solid #3c5268",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
             <button
               onClick={() => setShowOcrText(!showOcrText)}
