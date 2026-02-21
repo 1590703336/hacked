@@ -14,6 +14,8 @@ export default function App() {
   const [ttsChunkCount, setTtsChunkCount] = useState(0);
   const [ttsChunks, setTtsChunks] = useState([]);
   const [currentChunkIndex, setCurrentChunkIndex] = useState(null);
+  const [readingTarget, setReadingTarget] = useState(null);
+  const [ttsSourceLabel, setTtsSourceLabel] = useState("");
 
   const eventSourceRef = useRef(null);
   const audioQueueRef = useRef([]);
@@ -44,6 +46,7 @@ export default function App() {
     clearAudio();
     setIsReading(false);
     setCurrentChunkIndex(null);
+    setReadingTarget(null);
   };
 
   const playNextChunk = () => {
@@ -85,17 +88,20 @@ export default function App() {
     });
   };
 
-  const startReading = () => {
-    if (!resultText || isReading) return;
+  const startReading = (textToRead, target) => {
+    if (!textToRead || typeof textToRead !== "string" || textToRead.trim().length === 0) return;
+    if (isReading && readingTarget === target) return;
 
     stopReading();
     setTtsError(null);
     setTtsChunkCount(0);
     setTtsChunks([]);
     setCurrentChunkIndex(null);
+    setReadingTarget(target);
+    setTtsSourceLabel(target === "summary" ? "Summary" : "OCR Result");
     streamDoneRef.current = false;
 
-    const params = new URLSearchParams({ markdown: resultText });
+    const params = new URLSearchParams({ markdown: textToRead });
     const stream = new EventSource(`/api/tts/stream?${params.toString()}`);
     eventSourceRef.current = stream;
     setIsReading(true);
@@ -137,6 +143,7 @@ export default function App() {
         if (!isPlayingRef.current && audioQueueRef.current.length === 0) {
           setIsReading(false);
           setCurrentChunkIndex(null);
+          setReadingTarget(null);
         }
       }
     };
@@ -148,8 +155,20 @@ export default function App() {
       if (!isPlayingRef.current && audioQueueRef.current.length === 0) {
         setIsReading(false);
         setCurrentChunkIndex(null);
+        setReadingTarget(null);
       }
     };
+  };
+
+  const getSummaryReadableText = () => {
+    if (!summaryText) return "";
+    if (typeof summaryText === "string") return summaryText;
+    if (Array.isArray(summaryText.takeaways)) {
+      return summaryText.takeaways
+        .map((point, idx) => `${idx + 1}. ${point}`)
+        .join("\n");
+    }
+    return JSON.stringify(summaryText, null, 2);
   };
 
   useEffect(() => {
@@ -176,6 +195,7 @@ export default function App() {
     setTtsChunkCount(0);
     setTtsChunks([]);
     setCurrentChunkIndex(null);
+    setTtsSourceLabel("");
 
     try {
       // 1. Capture API
@@ -330,7 +350,7 @@ export default function App() {
 
             {!isReading ? (
               <button
-                onClick={startReading}
+                onClick={() => startReading(resultText, "ocr")}
                 style={{
                   padding: "0.5rem 1rem",
                   cursor: "pointer",
@@ -343,7 +363,7 @@ export default function App() {
               >
                 Read OCR Aloud
               </button>
-            ) : (
+            ) : readingTarget === "ocr" ? (
               <button
                 onClick={stopReading}
                 style={{
@@ -358,6 +378,21 @@ export default function App() {
               >
                 Stop Reading
               </button>
+            ) : (
+              <button
+                onClick={() => startReading(resultText, "ocr")}
+                style={{
+                  padding: "0.5rem 1rem",
+                  cursor: "pointer",
+                  backgroundColor: "#3ef07a",
+                  color: "#080b0f",
+                  border: "none",
+                  borderRadius: "8px",
+                  fontWeight: "bold",
+                }}
+              >
+                Switch To OCR Read
+              </button>
             )}
           </div>
 
@@ -370,7 +405,7 @@ export default function App() {
               marginBottom: "1rem"
             }}>
               <div style={{ marginBottom: "0.75rem", color: "#8fa4bc", fontSize: "0.9rem" }}>
-                Read-Aloud Chunks ({ttsChunkCount || ttsChunks.length})
+                {ttsSourceLabel ? `${ttsSourceLabel} Read-Aloud Chunks` : "Read-Aloud Chunks"} ({ttsChunkCount || ttsChunks.length})
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", maxHeight: "280px", overflowY: "auto" }}>
                 {Array.from({ length: ttsChunkCount || ttsChunks.length }).map((_, idx) => {
@@ -406,7 +441,42 @@ export default function App() {
 
           {summaryText && (
             <div>
-              <h3>Summary</h3>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem", flexWrap: "wrap" }}>
+                <h3>Summary</h3>
+                {!isReading || readingTarget !== "summary" ? (
+                  <button
+                    onClick={() => startReading(getSummaryReadableText(), "summary")}
+                    style={{
+                      padding: "0.35rem 0.75rem",
+                      cursor: "pointer",
+                      backgroundColor: "#3e9fff",
+                      color: "#080b0f",
+                      border: "none",
+                      borderRadius: "8px",
+                      fontWeight: "bold",
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    Read Summary Aloud
+                  </button>
+                ) : (
+                  <button
+                    onClick={stopReading}
+                    style={{
+                      padding: "0.35rem 0.75rem",
+                      cursor: "pointer",
+                      backgroundColor: "#ff7c3e",
+                      color: "#080b0f",
+                      border: "none",
+                      borderRadius: "8px",
+                      fontWeight: "bold",
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    Stop Summary
+                  </button>
+                )}
+              </div>
               <div style={{
                 backgroundColor: "#2a3b4c",
                 color: "#e8f0f8",
