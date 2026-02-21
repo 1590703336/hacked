@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { useHotkeys } from "react-hotkeys-hook";
 import "./App.css";
 
 export default function App() {
@@ -7,6 +8,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [resultText, setResultText] = useState("");
+  const [showOcrText, setShowOcrText] = useState(false);
   const [processedImages, setProcessedImages] = useState([]);
   const [summaryText, setSummaryText] = useState("");
   const [summarizing, setSummarizing] = useState(false);
@@ -51,10 +53,12 @@ export default function App() {
   const recordedChunksRef = useRef([]);
   const tutorAudioRef = useRef(null);
   const togglePauseReadingRef = useRef(() => { });
+  const pauseReadingRef = useRef(() => { });
   const isReadingRef = useRef(false);
   const whisperTestRecorderRef = useRef(null);
   const whisperTestStreamRef = useRef(null);
   const whisperTestChunksRef = useRef([]);
+  const [hasInteracted, setHasInteracted] = useState(false);
   const whisperTestStartedAtRef = useRef(0);
   const whisperTestPlaybackAudioRef = useRef(null);
   const whisperTestPlaybackUrlRef = useRef("");
@@ -65,6 +69,14 @@ export default function App() {
   const whisperTestPeakRef = useRef(0);
   const tutorStartedAtRef = useRef(0);
   const unmountCleanupRef = useRef(() => { });
+  const fileInputRef = useRef(null);
+
+  const speakFeedback = useCallback((text) => {
+    if (!text) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  }, []);
 
   const closeStream = () => {
     if (eventSourceRef.current) {
@@ -726,6 +738,7 @@ export default function App() {
 
   useEffect(() => {
     togglePauseReadingRef.current = togglePauseReading;
+    pauseReadingRef.current = pauseReading;
   });
 
   useEffect(() => {
@@ -743,15 +756,10 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      const targetTag = event.target?.tagName;
-      const isEditable =
-        targetTag === "INPUT" ||
-        targetTag === "TEXTAREA" ||
-        event.target?.isContentEditable;
-      if (isEditable) return;
-      if (event.code === "Space" && isReadingRef.current) {
-        event.preventDefault();
-        togglePauseReadingRef.current();
+      // Just catch general global events if we need them, 
+      // Space logic has been moved purely to react-hotkeys-hook.
+      if (event.code === "Escape") {
+        stopReading();
       }
     };
 
@@ -813,9 +821,9 @@ export default function App() {
     setFile(newFile);
   };
 
-  // Trigger upload whenever setFile is called by the IPC capture
+  // Trigger upload whenever setFile is called (either by IPC capture or by manual file selection)
   useEffect(() => {
-    if (file && file.name === "screenshot.png") {
+    if (file) {
       handleUpload();
     }
   }, [file]);
@@ -967,6 +975,126 @@ export default function App() {
     setWhisperTestTranscribing(false);
     setActivePage("main");
   };
+
+  // --- HOTKEYS ---
+  useHotkeys('ctrl+k, cmd+k', (e) => {
+    e.preventDefault();
+    if (isReadingRef.current) {
+      togglePauseReadingRef.current();
+      speakFeedback(isPausedRef.current ? "Reading paused" : "Reading resumed");
+    } else if (summaryText) {
+      speakFeedback("Starting to read summary.");
+      startReading(getSummaryReadableText(), "summary");
+    } else if (resultText) {
+      speakFeedback("Starting to read document.");
+      startReading(resultText, "ocr");
+    } else {
+      speakFeedback("Nothing is currently being read");
+    }
+  }, { enableOnFormTags: true }, [summaryText, resultText, isReadingRef, isPausedRef]);
+
+  useHotkeys('ctrl+r, cmd+r', (e) => {
+    e.preventDefault();
+    if (isRecording) {
+      stopRecordingQuestion();
+      speakFeedback("Recording stopped. Processing.");
+    } else {
+      startRecordingQuestion();
+      speakFeedback("Recording started. Please speak your question.");
+    }
+  }, { enableOnFormTags: true }, [isRecording]);
+
+  useHotkeys('ctrl+u, cmd+u', (e) => {
+    e.preventDefault();
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+      speakFeedback("Upload file dialog opened");
+    }
+  }, { enableOnFormTags: true });
+
+  useHotkeys('ctrl+s, cmd+s', (e) => {
+    e.preventDefault();
+    if (resultText && !summarizing) {
+      speakFeedback("Summarizing document.");
+      handleSummarize();
+    } else if (summarizing) {
+      speakFeedback("Already summarizing.");
+    } else {
+      speakFeedback("No document to summarize.");
+    }
+  }, { enableOnFormTags: true }, [resultText, summarizing]);
+
+  useHotkeys('ctrl+right, cmd+right', (e) => {
+    e.preventDefault();
+    if (isReadingRef.current && currentAudioRef.current) {
+      currentAudioRef.current.currentTime += 5; // Fast forward 5 seconds
+      speakFeedback("Skipping forward 5 seconds");
+    }
+  }, { enableOnFormTags: true });
+
+  useHotkeys('ctrl+left, cmd+left', (e) => {
+    e.preventDefault();
+    if (isReadingRef.current && currentAudioRef.current) {
+      currentAudioRef.current.currentTime = Math.max(0, currentAudioRef.current.currentTime - 5);
+      speakFeedback("Rewinding 5 seconds");
+    }
+  }, { enableOnFormTags: true });
+
+  useHotkeys('ctrl+h, cmd+h', (e) => {
+    e.preventDefault();
+    if (isReadingRef.current && !isPausedRef.current) {
+      pauseReadingRef.current();
+    }
+    speakFeedback("Shortcuts: Control K to play or pause reading. Control R to record a question. Control U to upload a file. Control S to summarize. Control Right or Left arrow to skip forward or backward 5 seconds.");
+  }, { enableOnFormTags: true });
+
+  // --- ACCESSIBILITY ANNOUNCEMENTS ---
+  // Browsers block autoplay audio (including TTS) until a user interaction occurs.
+  // We fire the welcome message explicitly in the onClick/onKeyDown of the welcome overlay.
+
+  useEffect(() => {
+    if (resultText && !summaryText) {
+      speakFeedback("Document processed. Control S to summarize. Control K to read aloud. Control R to ask a question.");
+    }
+  }, [resultText, summaryText, speakFeedback]);
+
+  useEffect(() => {
+    if (summaryText) {
+      speakFeedback("Summary generated. Control K to read aloud.");
+    }
+  }, [summaryText, speakFeedback]);
+
+  const handleInitialInteraction = () => {
+    if (!hasInteracted) {
+      setHasInteracted(true);
+      speakFeedback("Application loaded. Shortcuts: Control U to upload a file. Control R to record a question. Control H to repeat instructions anytime.");
+    }
+  };
+
+  if (!hasInteracted) {
+    return (
+      <div
+        onClick={handleInitialInteraction}
+        onKeyDown={handleInitialInteraction}
+        tabIndex={0}
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: "#0d1117",
+          color: "#e8f0f8",
+          fontFamily: "sans-serif",
+          cursor: "pointer"
+        }}
+      >
+        <div style={{ textAlign: "center", padding: "2rem", border: "2px solid #3c5268", borderRadius: "12px", backgroundColor: "#1b2938" }}>
+          <h1 style={{ marginBottom: "1rem" }}>Welcome to the Accessible OCR App</h1>
+          <p style={{ fontSize: "1.3rem", color: "#8fa4bc" }}>Click anywhere or press any key to start and enable audio.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (activePage === "whisper-test") {
     return (
@@ -1167,7 +1295,17 @@ export default function App() {
   }
 
   return (
-    <div style={{ padding: "2rem", maxWidth: "800px", margin: "0 auto", fontFamily: "sans-serif" }}>
+    <div style={{ padding: "2rem", maxWidth: "800px", margin: "0 auto", fontFamily: "sans-serif", minHeight: "100vh" }}>
+      <div aria-live="polite" aria-atomic="true" style={{ position: "absolute", width: "1px", height: "1px", padding: 0, margin: "-1px", overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}>
+        {loading ? "Processing document. Please wait." : ""}
+        {summarizing ? "Generating summary." : ""}
+        {isRecording ? "Listening to your question." : ""}
+        {isTranscribing ? "Transcribing your audio." : ""}
+        {isTutorThinking ? "Tutor is thinking." : ""}
+        {error ? "Error: " + error : ""}
+        {ttsError ? "Audio Error: " + ttsError : ""}
+        {tutorError ? "Tutor Error: " + tutorError : ""}
+      </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
         <h1>Simple Upload & OCR</h1>
         <button
@@ -1187,24 +1325,24 @@ export default function App() {
       <div style={{ marginBottom: "1.5rem", display: "flex", alignItems: "center", gap: "1rem" }}>
         <input
           type="file"
-          onChange={(e) => setFile(e.target.files[0])}
+          ref={fileInputRef}
+          onChange={(e) => {
+            const selectedFile = e.target.files[0];
+            if (selectedFile) {
+              setFile(selectedFile);
+              // Since state updates are async, we can't just call handleUpload() directly here reliably
+              // without it using the *old* state of `file`. The effect hook handles it.
+            }
+          }}
           style={{ color: "var(--text, black)" }}
         />
-        <button
-          onClick={handleUpload}
-          disabled={!file || loading}
-          style={{
-            padding: "0.5rem 1rem",
-            cursor: (!file || loading) ? "not-allowed" : "pointer",
-            backgroundColor: "#3ecfcf",
-            color: "#080b0f",
-            border: "none",
-            borderRadius: "8px",
-            fontWeight: "bold"
-          }}
-        >
-          {loading ? "Processing..." : "Upload & Process"}
-        </button>
+        {/* The upload button is hidden because the process is now automatic, 
+            but kept in the DOM if needed for fallback accessibility later */}
+        {loading && (
+          <div style={{ color: "#3ecfcf", fontWeight: "bold" }}>
+            Processing document automatically...
+          </div>
+        )}
       </div>
 
       {error && (
@@ -1215,19 +1353,40 @@ export default function App() {
 
       {resultText && (
         <div>
-          <h2>Result</h2>
-          <pre style={{
-            whiteSpace: "pre-wrap",
-            backgroundColor: "#1e2836",
-            color: "#e8f0f8",
-            padding: "1.5rem",
-            borderRadius: "8px",
-            border: "1px solid #263545",
-            marginTop: "1rem",
-            marginBottom: "1rem"
-          }}>
-            {resultText}
-          </pre>
+          <h2>Document Processed</h2>
+
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+            <button
+              onClick={() => setShowOcrText(!showOcrText)}
+              style={{
+                padding: "0.5rem 1rem",
+                cursor: "pointer",
+                backgroundColor: "#2a3b4c",
+                color: "#e8f0f8",
+                border: "1px solid #3c5268",
+                borderRadius: "8px",
+                fontWeight: "bold",
+              }}
+            >
+              {showOcrText ? "Hide Transcription" : "Show Transcription"}
+            </button>
+          </div>
+
+          {showOcrText && (
+            <pre style={{
+              whiteSpace: "pre-wrap",
+              backgroundColor: "#1e2836",
+              color: "#e8f0f8",
+              padding: "1.5rem",
+              borderRadius: "8px",
+              border: "1px solid #263545",
+              marginTop: "1rem",
+              marginBottom: "1rem"
+            }}>
+              {resultText}
+            </pre>
+          )}
+
           <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
             <button
               onClick={handleSummarize}
@@ -1446,24 +1605,6 @@ export default function App() {
         </div>
       )}
 
-      {processedImages.length > 0 && (
-        <div style={{ marginTop: "2rem" }}>
-          <h2>Processed Images ({processedImages.length})</h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: "1rem", marginTop: "1rem" }}>
-            {processedImages.map((base64Image, idx) => (
-              <div key={idx} style={{ border: "1px solid #263545", borderRadius: "8px", padding: "0.5rem", backgroundColor: "#1e2836" }}>
-                <p style={{ margin: "0 0 0.5rem 0", fontWeight: "bold", color: "#e8f0f8" }}>Image {idx + 1}</p>
-                <img
-                  src={`data:image/png;base64,${base64Image}`}
-                  alt={`Processed ${idx + 1}`}
-                  style={{ maxWidth: "100%", height: "auto", borderRadius: "4px" }}
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {(resultText || summaryText) && (
         <div
           style={{
@@ -1595,7 +1736,8 @@ export default function App() {
             ))}
           </div>
         </div>
-      )}
-    </div>
+      )
+      }
+    </div >
   );
 }
