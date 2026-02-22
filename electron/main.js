@@ -7,6 +7,7 @@ const FRONTEND_DEV_URL = 'http://localhost:5173';
 const CAPTURE_HOTKEYS = process.platform === 'darwin'
   ? ['Command+Shift+A', 'Control+Shift+A']
   : ['Control+Shift+A'];
+const CAPTURE_GUARD_MS = 500;
 
 let mainWindow;
 let backendProcess;
@@ -107,7 +108,7 @@ function registerGlobalShortcuts() {
 
 async function captureAndSendScreen(trigger = 'unknown') {
   const now = Date.now();
-  if (captureInFlight || now - lastCaptureAt < 500) {
+  if (captureInFlight || now - lastCaptureAt < CAPTURE_GUARD_MS) {
     return;
   }
 
@@ -132,6 +133,9 @@ async function captureAndSendScreen(trigger = 'unknown') {
     const base64 = screenshot.toString('base64');
     win.webContents.send('screen-captured', base64);
 
+    if (win.isMinimized()) {
+      win.restore();
+    }
     if (!win.isVisible()) {
       win.show();
     }

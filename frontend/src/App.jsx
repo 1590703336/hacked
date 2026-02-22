@@ -700,16 +700,24 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
 
     // Electron IPC handlers
+    let unsubscribeScreenCaptured;
+    let unsubscribeShortcutCapture;
     if (window.electronAPI) {
-      window.electronAPI.onScreenCaptured((base64Image) => {
+      unsubscribeScreenCaptured = window.electronAPI.onScreenCaptured((base64Image) => {
         handleImageUpload(base64Image, "screenshot.png", "image/png");
       });
-      window.electronAPI.onShortcutCapture(() => {
+      unsubscribeShortcutCapture = window.electronAPI.onShortcutCapture(() => {
       });
     }
 
     return () => {
       window.removeEventListener("keydown", onKeyDown);
+      if (typeof unsubscribeScreenCaptured === "function") {
+        unsubscribeScreenCaptured();
+      }
+      if (typeof unsubscribeShortcutCapture === "function") {
+        unsubscribeShortcutCapture();
+      }
       closeStream();
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
