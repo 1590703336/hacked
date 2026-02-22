@@ -1,23 +1,20 @@
 const { ValidationError } = require('../../shared/errors');
 
-const VALID_VOICES = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
-const VALID_MODELS = ['tts-1', 'tts-1-hd'];
-
 function validateTTSOptions(options, next) {
     const { voice, speed, model } = options;
 
-    if (voice && !VALID_VOICES.includes(voice)) {
-        return next(new ValidationError(`voice must be one of: ${VALID_VOICES.join(', ')}`));
+    if (voice !== undefined && (typeof voice !== 'string' || voice.trim().length === 0)) {
+        return next(new ValidationError('voice must be a non-empty string'));
     }
 
-    if (model && !VALID_MODELS.includes(model)) {
-        return next(new ValidationError(`model must be one of: ${VALID_MODELS.join(', ')}`));
+    if (model !== undefined && (typeof model !== 'string' || model.trim().length === 0)) {
+        return next(new ValidationError('model must be a non-empty string'));
     }
 
     if (speed !== undefined) {
         const speedNum = Number(speed);
-        if (isNaN(speedNum) || speedNum < 0.25 || speedNum > 4.0) {
-            return next(new ValidationError('speed must be a number between 0.25 and 4.0'));
+        if (isNaN(speedNum) || speedNum < 0.5 || speedNum > 2.0) {
+            return next(new ValidationError('speed must be a number between 0.5 and 2.0'));
         }
     }
 
@@ -59,18 +56,35 @@ function validatePipeline(req, _res, next) {
 }
 
 function validateStream(req, _res, next) {
-    const { markdown } = req.query;
+    const source = req.method === 'GET' ? req.query : req.body;
+    const { markdown, streamId } = source;
 
     if (!markdown || typeof markdown !== 'string' || markdown.trim().length === 0) {
         return next(new ValidationError('markdown is required and must be a non-empty string'));
     }
 
-    // Pass req.query for SSE option validation
-    if (validateTTSOptions(req.query, next) === true) {
+    if (streamId !== undefined && (typeof streamId !== 'string' || streamId.trim().length === 0)) {
+        return next(new ValidationError('streamId must be a non-empty string when provided'));
+    }
+
+    if (validateTTSOptions(source, next) === true) {
         next();
     }
 }
 
-module.exports = { validateSynthesize, validateChunk, validatePipeline, validateStream };
+function validateStreamControl(req, _res, next) {
+    const { streamId, action } = req.body || {};
 
+    if (!streamId || typeof streamId !== 'string' || streamId.trim().length === 0) {
+        return next(new ValidationError('streamId is required and must be a non-empty string'));
+    }
 
+    const validActions = ['pause', 'resume', 'stop'];
+    if (!validActions.includes(action)) {
+        return next(new ValidationError(`action must be one of: ${validActions.join(', ')}`));
+    }
+
+    next();
+}
+
+module.exports = { validateSynthesize, validateChunk, validatePipeline, validateStream, validateStreamControl };

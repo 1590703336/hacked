@@ -13,6 +13,12 @@ const openrouter = new OpenAI({
     apiKey: config.openRouterApiKey,
 });
 
+function perfLog(message) {
+    if (config.enablePerfLogs) {
+        console.log(message);
+    }
+}
+
 /**
  * Answer a user's spoken question using the current reading context.
  * Generates a relatable real-world analogy.
@@ -21,6 +27,7 @@ const openrouter = new OpenAI({
  * @returns {object} AI response with explanation
  */
 async function answerQuestion(question, context) {
+    const startedAt = Date.now();
     if (!question) {
         throw new ValidationError('question is required');
     }
@@ -43,11 +50,13 @@ async function answerQuestion(question, context) {
 
     const answer = response.choices[0]?.message?.content || '';
 
-    return {
+    const result = {
         question,
         answer,
         tokensUsed: response.usage?.total_tokens || 0,
     };
+    perfLog(`[Tutor][ask] questionChars=${question.length} contextChars=${(context || '').length} totalMs=${Date.now() - startedAt} tokens=${response.usage?.total_tokens || 0}`);
+    return result;
 }
 
 /**
@@ -56,6 +65,7 @@ async function answerQuestion(question, context) {
  * @returns {object} transcription result
  */
 async function transcribeAudio(file) {
+    const startedAt = Date.now();
     if (!file) {
         throw new ValidationError('No audio file provided');
     }
@@ -82,6 +92,7 @@ async function transcribeAudio(file) {
             model: 'whisper-1',
         };
     } finally {
+        perfLog(`[Tutor][transcribe] bytes=${file?.size || 0} mime=${file?.mimetype || 'unknown'} totalMs=${Date.now() - startedAt}`);
         // Clean up temp file
         if (fs.existsSync(tempPath)) {
             fs.unlinkSync(tempPath);

@@ -59,7 +59,7 @@ POST /api/capture/screen
 
 POST /api/tts/synthesize
   Body: { text: string, voice?: "nova" | "alloy" | ... }
-  Response: audio/mpeg binary
+  Response: audio/wav binary
 
 POST /api/tts/chunk
   Body: { markdown: string }

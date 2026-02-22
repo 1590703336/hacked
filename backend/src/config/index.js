@@ -3,13 +3,21 @@ require('dotenv').config();
 module.exports = {
     nodeEnv: process.env.NODE_ENV || 'development',
     port: parseInt(process.env.PORT, 10) || 3001,
+    enablePerfLogs: ['1', 'true', 'yes', 'on'].includes((process.env.ENABLE_PERF_LOGS || 'true').toLowerCase()),
 
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     openRouterApiKey: process.env.OPENROUTER_API_KEY || '',
 
     // TTS
-    ttsModel: process.env.TTS_MODEL || 'tts-1',
-    ttsDefaultVoice: process.env.TTS_DEFAULT_VOICE || 'nova',
+    ttsModel: process.env.TTS_MODEL || 'onnx-community/Kokoro-82M-v1.0-ONNX',
+    ttsDefaultVoice: process.env.TTS_DEFAULT_VOICE || 'af_nova',
+    ttsDevice: process.env.TTS_DEVICE || 'cpu',
+    ttsDtype: process.env.TTS_DTYPE || 'q8',
+    ttsChunkConcurrency: parseInt(process.env.TTS_CHUNK_CONCURRENCY, 10) || 1,
+    ttsInferenceConcurrency: parseInt(process.env.TTS_INFERENCE_CONCURRENCY, 10) || 1,
+    ttsInteractiveInferenceConcurrency: parseInt(process.env.TTS_INTERACTIVE_INFERENCE_CONCURRENCY, 10) || 1,
+    ttsRetryAttempts: parseInt(process.env.TTS_RETRY_ATTEMPTS, 10) || 2,
+    ttsPrewarm: process.env.TTS_PREWARM !== 'false',
 
     ocr: {
         model: process.env.OCR_MODEL || 'google/gemini-3-flash-preview',

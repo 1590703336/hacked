@@ -94,7 +94,7 @@ const USE_MOCK = false; // ← change this when backend is ready
 |---|---|---|
 | OCR | `/api/ocr` | POST |
 | Summarizer | `/api/summarize` | POST |
-| TTS Synthesize | `/api/tts/synthesize` | POST → audio/mpeg |
+| TTS Synthesize | `/api/tts/synthesize` | POST → audio/wav |
 | TTS Chunk | `/api/tts/chunk` | POST |
 | Tutor Ask | `/api/tutor/ask` | POST |
 | Tutor Transcribe | `/api/tutor/transcribe` | POST (FormData) |
