@@ -600,7 +600,6 @@ export default function App() {
         pauseReadingRef.current();
       }
       stopTutorAnswerAudio();
-      window.speechSynthesis.cancel();
       if (announce) {
         await speakFeedback("Recording started. Please speak your question.");
         await delay(150);
