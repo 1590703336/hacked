@@ -3,7 +3,6 @@ import { useHotkeys } from "react-hotkeys-hook";
 import "./App.css";
 
 export default function App() {
-  const [activePage, setActivePage] = useState("main");
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -18,7 +17,6 @@ export default function App() {
   const [ttsChunkCount, setTtsChunkCount] = useState(0);
   const [ttsChunks, setTtsChunks] = useState([]);
   const [currentChunkIndex, setCurrentChunkIndex] = useState(null);
-  const [ttsSpeed, setTtsSpeed] = useState(1.0);
   const [readingTarget, setReadingTarget] = useState(null);
   const [ttsSourceLabel, setTtsSourceLabel] = useState("");
   const [tutorMessages, setTutorMessages] = useState([]);
@@ -26,20 +24,10 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTutorThinking, setIsTutorThinking] = useState(false);
   const [tutorError, setTutorError] = useState(null);
-  const [whisperTestRecording, setWhisperTestRecording] = useState(false);
-  const [whisperTestTranscribing, setWhisperTestTranscribing] = useState(false);
-  const [whisperTestError, setWhisperTestError] = useState(null);
-  const [whisperTestText, setWhisperTestText] = useState("");
-  const [whisperTestHistory, setWhisperTestHistory] = useState([]);
-  const [whisperTestMeta, setWhisperTestMeta] = useState(null);
-  const [whisperTestHasPlayback, setWhisperTestHasPlayback] = useState(false);
-  const [whisperTestPlaying, setWhisperTestPlaying] = useState(false);
-  const [audioInputs, setAudioInputs] = useState([]);
-  const [selectedAudioInputId, setSelectedAudioInputId] = useState("");
-  const [micLevel, setMicLevel] = useState(0);
-  const [micPeak, setMicPeak] = useState(0);
+  const [broadcastEnabled, setBroadcastEnabled] = useState(true);
   const OCR_CONCURRENCY = 3;
-  const TTS_SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0];
+  const TTS_SPEED = 1.0;
+  const TTS_GAIN_BOOST = 2.3;
 
   const eventSourceRef = useRef(null);
   const streamSessionIdRef = useRef("");
@@ -57,29 +45,25 @@ export default function App() {
   const recordingStreamRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const tutorAudioRef = useRef(null);
+  const currentAudioBoostCleanupRef = useRef(() => { });
+  const tutorAudioBoostCleanupRef = useRef(() => { });
+  const ttsAudioContextRef = useRef(null);
+  const ttsGainNodeRef = useRef(null);
+  const ttsCompressorRef = useRef(null);
   const togglePauseReadingRef = useRef(() => { });
   const pauseReadingRef = useRef(() => { });
   const isReadingRef = useRef(false);
-  const whisperTestRecorderRef = useRef(null);
-  const whisperTestStreamRef = useRef(null);
-  const whisperTestChunksRef = useRef([]);
   const [hasInteracted, setHasInteracted] = useState(false);
-  const whisperTestStartedAtRef = useRef(0);
-  const whisperTestPlaybackAudioRef = useRef(null);
-  const whisperTestPlaybackUrlRef = useRef("");
-  const whisperTestMonitorAudioContextRef = useRef(null);
-  const whisperTestMonitorAnalyserRef = useRef(null);
-  const whisperTestMonitorSourceRef = useRef(null);
-  const whisperTestMonitorTimerRef = useRef(null);
-  const whisperTestPeakRef = useRef(0);
   const tutorStartedAtRef = useRef(0);
   const unmountCleanupRef = useRef(() => { });
   const fileInputRef = useRef(null);
+  const broadcastEnabledRef = useRef(true);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const speakFeedback = useCallback((text) => {
+  const speakFeedback = useCallback((text, { force = false } = {}) => {
     return new Promise((resolve) => {
       if (!text) return resolve();
+      if (!force && !broadcastEnabledRef.current) return resolve();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.onend = resolve;
       // Also resolve on error so we don't hang if TTS fails
@@ -88,6 +72,18 @@ export default function App() {
       window.speechSynthesis.speak(utterance);
     });
   }, []);
+
+  const toggleBroadcast = useCallback(() => {
+    if (broadcastEnabledRef.current) {
+      window.speechSynthesis.cancel();
+      broadcastEnabledRef.current = false;
+      setBroadcastEnabled(false);
+      return;
+    }
+    broadcastEnabledRef.current = true;
+    setBroadcastEnabled(true);
+    speakFeedback("Broadcast voice is on.", { force: true });
+  }, [speakFeedback]);
 
   const closeStream = () => {
     if (eventSourceRef.current) {
@@ -116,6 +112,8 @@ export default function App() {
   };
 
   const stopTutorAnswerAudio = () => {
+    tutorAudioBoostCleanupRef.current();
+    tutorAudioBoostCleanupRef.current = () => { };
     if (tutorAudioRef.current) {
       tutorAudioRef.current.pause();
       tutorAudioRef.current.src = "";
@@ -123,54 +121,60 @@ export default function App() {
     }
   };
 
-  const clearWhisperTestPlayback = () => {
-    if (whisperTestPlaybackAudioRef.current) {
-      whisperTestPlaybackAudioRef.current.pause();
-      whisperTestPlaybackAudioRef.current.src = "";
-      whisperTestPlaybackAudioRef.current = null;
+  const ensureTtsAudioProcessing = () => {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) return null;
+    if (!ttsAudioContextRef.current) {
+      const ctx = new AudioContextCtor();
+      const gain = ctx.createGain();
+      gain.gain.value = TTS_GAIN_BOOST;
+      const compressor = ctx.createDynamicsCompressor();
+      compressor.threshold.value = -20;
+      compressor.knee.value = 20;
+      compressor.ratio.value = 3;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.2;
+      gain.connect(compressor);
+      compressor.connect(ctx.destination);
+      ttsAudioContextRef.current = ctx;
+      ttsGainNodeRef.current = gain;
+      ttsCompressorRef.current = compressor;
     }
-    if (whisperTestPlaybackUrlRef.current) {
-      URL.revokeObjectURL(whisperTestPlaybackUrlRef.current);
-      whisperTestPlaybackUrlRef.current = "";
+    if (ttsAudioContextRef.current.state === "suspended") {
+      ttsAudioContextRef.current.resume().catch(() => { });
     }
-    setWhisperTestHasPlayback(false);
-    setWhisperTestPlaying(false);
+    return {
+      ctx: ttsAudioContextRef.current,
+      gain: ttsGainNodeRef.current,
+    };
   };
 
-  const setWhisperTestPlaybackBlob = (audioBlob) => {
-    clearWhisperTestPlayback();
-    const url = URL.createObjectURL(audioBlob);
-    const audio = new Audio(url);
-    whisperTestPlaybackUrlRef.current = url;
-    whisperTestPlaybackAudioRef.current = audio;
-    audio.onended = () => {
-      setWhisperTestPlaying(false);
-    };
-    audio.onerror = () => {
-      setWhisperTestPlaying(false);
-      setWhisperTestError("Local playback failed");
-    };
-    setWhisperTestHasPlayback(true);
+  const attachTtsBoost = (audioElement) => {
+    const chain = ensureTtsAudioProcessing();
+    if (!chain) return () => { };
+    try {
+      const sourceNode = chain.ctx.createMediaElementSource(audioElement);
+      sourceNode.connect(chain.gain);
+      return () => {
+        try {
+          sourceNode.disconnect();
+        } catch {
+          // no-op
+        }
+      };
+    } catch (err) {
+      console.warn("TTS boost hookup skipped:", err);
+      return () => { };
+    }
   };
 
-  const toggleWhisperTestPlayback = () => {
-    const audio = whisperTestPlaybackAudioRef.current;
-    if (!audio) return;
-    if (whisperTestPlaying) {
-      audio.pause();
-      setWhisperTestPlaying(false);
-      return;
+  const releaseTtsAudioProcessing = () => {
+    if (ttsAudioContextRef.current) {
+      ttsAudioContextRef.current.close().catch(() => { });
     }
-    if (audio.ended || (audio.duration && audio.currentTime >= audio.duration - 0.05)) {
-      audio.currentTime = 0;
-    }
-    audio.play().then(() => {
-      setWhisperTestPlaying(true);
-    }).catch((err) => {
-      console.error(err);
-      setWhisperTestError("Local playback was blocked by browser");
-      setWhisperTestPlaying(false);
-    });
+    ttsAudioContextRef.current = null;
+    ttsGainNodeRef.current = null;
+    ttsCompressorRef.current = null;
   };
 
   const releaseRecorder = () => {
@@ -187,6 +191,8 @@ export default function App() {
   };
 
   const clearAudio = () => {
+    currentAudioBoostCleanupRef.current();
+    currentAudioBoostCleanupRef.current = () => { };
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current.src = "";
@@ -270,14 +276,19 @@ export default function App() {
     const mimeType = nextChunk.mimeType || ttsMimeTypeRef.current || "audio/wav";
     const audio = new Audio(`data:${mimeType};base64,${nextChunk.audioBase64}`);
     currentAudioRef.current = audio;
+    currentAudioBoostCleanupRef.current = attachTtsBoost(audio);
 
     audio.onended = () => {
+      currentAudioBoostCleanupRef.current();
+      currentAudioBoostCleanupRef.current = () => { };
       isPlayingRef.current = false;
       currentAudioRef.current = null;
       playNextChunk();
     };
 
     audio.onerror = () => {
+      currentAudioBoostCleanupRef.current();
+      currentAudioBoostCleanupRef.current = () => { };
       isPlayingRef.current = false;
       currentAudioRef.current = null;
       setTtsError(`Chunk ${nextChunk.chunkIndex + 1} playback failed`);
@@ -371,7 +382,7 @@ export default function App() {
           body: JSON.stringify({
             streamId,
             markdown: textToRead,
-            speed: String(ttsSpeed),
+            speed: String(TTS_SPEED),
           }),
           signal: abortController.signal,
         });
@@ -497,227 +508,12 @@ export default function App() {
     return candidates.find((mime) => MediaRecorder.isTypeSupported(mime)) || "";
   };
 
-  const loadAudioInputDevices = async () => {
-    if (!navigator.mediaDevices?.enumerateDevices) return;
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const inputs = devices.filter((device) => device.kind === "audioinput");
-      setAudioInputs(inputs);
-      setSelectedAudioInputId((prev) => prev || inputs[0]?.deviceId || "");
-    } catch (err) {
-      console.error("Failed to enumerate audio devices:", err);
-    }
-  };
-
-  const stopWhisperTestMicMonitor = () => {
-    if (whisperTestMonitorTimerRef.current) {
-      clearInterval(whisperTestMonitorTimerRef.current);
-      whisperTestMonitorTimerRef.current = null;
-    }
-    if (whisperTestMonitorSourceRef.current) {
-      whisperTestMonitorSourceRef.current.disconnect();
-      whisperTestMonitorSourceRef.current = null;
-    }
-    if (whisperTestMonitorAnalyserRef.current) {
-      whisperTestMonitorAnalyserRef.current.disconnect();
-      whisperTestMonitorAnalyserRef.current = null;
-    }
-    if (whisperTestMonitorAudioContextRef.current) {
-      whisperTestMonitorAudioContextRef.current.close().catch(() => { });
-      whisperTestMonitorAudioContextRef.current = null;
-    }
-    setMicLevel(0);
-  };
-
-  const startWhisperTestMicMonitor = (stream) => {
-    stopWhisperTestMicMonitor();
-    try {
-      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextCtor) return;
-      const ctx = new AudioContextCtor();
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.15;
-      source.connect(analyser);
-      const data = new Uint8Array(analyser.fftSize);
-
-      whisperTestMonitorAudioContextRef.current = ctx;
-      whisperTestMonitorSourceRef.current = source;
-      whisperTestMonitorAnalyserRef.current = analyser;
-
-      whisperTestMonitorTimerRef.current = setInterval(() => {
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) {
-          const centered = (data[i] - 128) / 128;
-          sum += centered * centered;
-        }
-        const rms = Math.sqrt(sum / data.length);
-        const normalized = Math.min(1, rms * 6);
-        setMicLevel(normalized);
-        whisperTestPeakRef.current = Math.max(whisperTestPeakRef.current, normalized);
-        setMicPeak((prev) => Math.max(prev, normalized));
-      }, 120);
-    } catch (err) {
-      console.error("Mic monitor setup failed:", err);
-    }
-  };
-
-  const playSpeakerTestTone = () => {
-    try {
-      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextCtor) throw new Error("AudioContext unsupported");
-      const ctx = new AudioContextCtor();
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.value = 440;
-      gain.gain.value = 0.0001;
-      oscillator.connect(gain);
-      gain.connect(ctx.destination);
-      oscillator.start();
-      gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
-      oscillator.stop(ctx.currentTime + 0.42);
-      oscillator.onended = () => {
-        ctx.close().catch(() => { });
-      };
-    } catch (err) {
-      console.error(err);
-      setWhisperTestError("Could not play speaker test tone");
-    }
-  };
-
   const buildRecorder = (stream) => {
     const mimeType = pickAudioMimeType();
     if (mimeType) {
       return new MediaRecorder(stream, { mimeType });
     }
     return new MediaRecorder(stream);
-  };
-
-  const releaseWhisperTestRecorder = () => {
-    stopWhisperTestMicMonitor();
-    if (whisperTestRecorderRef.current) {
-      whisperTestRecorderRef.current.ondataavailable = null;
-      whisperTestRecorderRef.current.onstop = null;
-      whisperTestRecorderRef.current = null;
-    }
-    if (whisperTestStreamRef.current) {
-      whisperTestStreamRef.current.getTracks().forEach((track) => track.stop());
-      whisperTestStreamRef.current = null;
-    }
-    whisperTestChunksRef.current = [];
-  };
-
-  const stopWhisperTestRecording = () => {
-    if (!whisperTestRecorderRef.current || whisperTestRecorderRef.current.state === "inactive") return;
-    whisperTestRecorderRef.current.stop();
-    setWhisperTestRecording(false);
-  };
-
-  const startWhisperTestRecording = async () => {
-    if (whisperTestRecording || whisperTestTranscribing) return;
-    try {
-      setWhisperTestError(null);
-      setWhisperTestMeta(null);
-      stopTutorAnswerAudio();
-      setMicLevel(0);
-      setMicPeak(0);
-      whisperTestPeakRef.current = 0;
-
-      const audioConstraints = {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-        channelCount: 1,
-      };
-      if (selectedAudioInputId) {
-        audioConstraints.deviceId = { exact: selectedAudioInputId };
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-      whisperTestStreamRef.current = stream;
-      const recorder = buildRecorder(stream);
-      whisperTestRecorderRef.current = recorder;
-      whisperTestChunksRef.current = [];
-      whisperTestStartedAtRef.current = Date.now();
-      startWhisperTestMicMonitor(stream);
-      loadAudioInputDevices();
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          whisperTestChunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.onstop = async () => {
-        const durationMs = Date.now() - whisperTestStartedAtRef.current;
-        const audioBlob = new Blob(whisperTestChunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        releaseWhisperTestRecorder();
-        if (!audioBlob || audioBlob.size === 0) {
-          setWhisperTestError("No audio captured. Please record longer and speak closer to the mic.");
-          return;
-        }
-        setWhisperTestPlaybackBlob(audioBlob);
-        setWhisperTestMeta({
-          bytes: audioBlob.size,
-          durationMs,
-          mimeType: recorder.mimeType || "audio/webm",
-          inputDevice: stream.getAudioTracks()[0]?.label || "(unknown input)",
-          peak: whisperTestPeakRef.current,
-        });
-        const likelySilent = whisperTestPeakRef.current < 0.02;
-        if (likelySilent || durationMs < 900 || audioBlob.size < 1500) {
-          setWhisperTestError(`Recording too short or silent (${audioBlob.size} bytes, ${Math.round(durationMs)} ms, peak ${whisperTestPeakRef.current.toFixed(3)}). Check mic device and OS input level.`);
-          setWhisperTestText("(empty)");
-          setWhisperTestHistory((prev) => [
-            {
-              timestamp: new Date().toISOString(),
-              text: "(blocked: too short/silent)",
-              bytes: audioBlob.size,
-              durationMs,
-              mimeType: recorder.mimeType || "audio/webm",
-              inputDevice: stream.getAudioTracks()[0]?.label || "(unknown input)",
-              peak: whisperTestPeakRef.current,
-            },
-            ...prev,
-          ]);
-          return;
-        }
-        try {
-          setWhisperTestTranscribing(true);
-          const text = await transcribeAudioBlob(audioBlob, getAudioFileName(recorder.mimeType || ""));
-          setWhisperTestText(text || "(empty)");
-          setWhisperTestHistory((prev) => [
-            {
-              timestamp: new Date().toISOString(),
-              text: text || "(empty)",
-              bytes: audioBlob.size,
-              durationMs,
-              mimeType: recorder.mimeType || "audio/webm",
-              inputDevice: stream.getAudioTracks()[0]?.label || "(unknown input)",
-              peak: whisperTestPeakRef.current,
-            },
-            ...prev,
-          ]);
-        } catch (err) {
-          console.error(err);
-          setWhisperTestError(err.message || "Whisper test failed");
-        } finally {
-          setWhisperTestTranscribing(false);
-        }
-      };
-
-      recorder.start(250);
-      setWhisperTestRecording(true);
-    } catch (err) {
-      console.error(err);
-      setWhisperTestError("Microphone access failed");
-      releaseWhisperTestRecorder();
-      setWhisperTestRecording(false);
-    }
   };
 
   const askTutorAndSpeak = async (questionText) => {
@@ -757,7 +553,7 @@ export default function App() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text: answerText, speed: ttsSpeed, priority: "interactive" }),
+      body: JSON.stringify({ text: answerText, speed: TTS_SPEED, priority: "interactive" }),
     });
     if (!ttsRes.ok) {
       const fallback = await ttsRes.text();
@@ -773,11 +569,16 @@ export default function App() {
     }
     const answerAudio = new Audio(audioUrl);
     tutorAudioRef.current = answerAudio;
+    tutorAudioBoostCleanupRef.current = attachTtsBoost(answerAudio);
     answerAudio.onended = () => {
+      tutorAudioBoostCleanupRef.current();
+      tutorAudioBoostCleanupRef.current = () => { };
       URL.revokeObjectURL(audioUrl);
       tutorAudioRef.current = null;
     };
     answerAudio.onerror = () => {
+      tutorAudioBoostCleanupRef.current();
+      tutorAudioBoostCleanupRef.current = () => { };
       URL.revokeObjectURL(audioUrl);
       tutorAudioRef.current = null;
       setTutorError("Failed to play tutor audio response");
@@ -883,8 +684,7 @@ export default function App() {
     unmountCleanupRef.current = () => {
       stopTutorAnswerAudio();
       releaseRecorder();
-      releaseWhisperTestRecorder();
-      clearWhisperTestPlayback();
+      releaseTtsAudioProcessing();
     };
   });
 
@@ -900,16 +700,24 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
 
     // Electron IPC handlers
+    let unsubscribeScreenCaptured;
+    let unsubscribeShortcutCapture;
     if (window.electronAPI) {
-      window.electronAPI.onScreenCaptured((base64Image) => {
+      unsubscribeScreenCaptured = window.electronAPI.onScreenCaptured((base64Image) => {
         handleImageUpload(base64Image, "screenshot.png", "image/png");
       });
-      window.electronAPI.onShortcutCapture(() => {
+      unsubscribeShortcutCapture = window.electronAPI.onShortcutCapture(() => {
       });
     }
 
     return () => {
       window.removeEventListener("keydown", onKeyDown);
+      if (typeof unsubscribeScreenCaptured === "function") {
+        unsubscribeScreenCaptured();
+      }
+      if (typeof unsubscribeShortcutCapture === "function") {
+        unsubscribeShortcutCapture();
+      }
       closeStream();
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
@@ -918,22 +726,6 @@ export default function App() {
       unmountCleanupRef.current();
     };
   }, []);
-
-  useEffect(() => {
-    if (activePage !== "whisper-test") return;
-    loadAudioInputDevices();
-    const onDeviceChange = () => {
-      loadAudioInputDevices();
-    };
-    if (navigator.mediaDevices?.addEventListener) {
-      navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
-    }
-    return () => {
-      if (navigator.mediaDevices?.removeEventListener) {
-        navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
-      }
-    };
-  }, [activePage]);
 
   const handleImageUpload = (base64String, filename, mimeType) => {
     // Convert base64 to Blob
@@ -1101,25 +893,6 @@ export default function App() {
     }
   };
 
-  const openWhisperTestPage = () => {
-    stopReading();
-    stopTutorAnswerAudio();
-    releaseRecorder();
-    setIsRecording(false);
-    setIsTranscribing(false);
-    setIsTutorThinking(false);
-    setActivePage("whisper-test");
-  };
-
-  const backToMainPage = () => {
-    stopWhisperTestRecording();
-    releaseWhisperTestRecorder();
-    clearWhisperTestPlayback();
-    setWhisperTestRecording(false);
-    setWhisperTestTranscribing(false);
-    setActivePage("main");
-  };
-
   // --- HOTKEYS ---
   useHotkeys('ctrl+k, cmd+k', async (e) => {
     e.preventDefault();
@@ -1132,7 +905,7 @@ export default function App() {
         speakFeedback("Reading paused");
       }
     } else if (resultText) {
-      await speakFeedback("OCR chunk processing started. Generating read aloud audio.");
+      void speakFeedback("OCR chunk processing started. Generating read aloud audio.");
       startReading(resultText, "ocr");
     } else {
       speakFeedback("No document is currently available to read.");
@@ -1150,7 +923,7 @@ export default function App() {
         speakFeedback("Reading paused");
       }
     } else if (summaryText) {
-      await speakFeedback("Summary chunk processing started. Generating read aloud audio.");
+      void speakFeedback("Summary chunk processing started. Generating read aloud audio.");
       startReading(getSummaryReadableText(), "summary");
     } else {
       speakFeedback("No summary has been generated yet.");
@@ -1194,14 +967,17 @@ export default function App() {
     }
   }, { enableOnFormTags: true }, [resultText, summarizing]);
 
-
+  useHotkeys('ctrl+m', (e) => {
+    e.preventDefault();
+    toggleBroadcast();
+  }, { enableOnFormTags: true }, [toggleBroadcast]);
 
   useHotkeys('ctrl+h, cmd+h', (e) => {
     e.preventDefault();
     if (isReadingRef.current && !isPausedRef.current) {
       pauseReadingRef.current();
     }
-    speakFeedback("Shortcuts: Control K to read or pause document. Control L to read or pause summary. Control R to record a question. Control Shift A to capture a screenshot and run OCR. Control U to upload a file. Control S to summarize.");
+    speakFeedback("Shortcuts: Control K to read or pause document. Control L to read or pause summary. Control R to record a question. Control Shift A to capture a screenshot and run OCR. Control U to upload a file. Control S to summarize. Control M toggles broadcast voice.");
   }, { enableOnFormTags: true });
 
   // --- ACCESSIBILITY ANNOUNCEMENTS ---
@@ -1223,7 +999,7 @@ export default function App() {
   const handleInitialInteraction = () => {
     if (!hasInteracted) {
       setHasInteracted(true);
-      speakFeedback("Application loaded. Shortcuts: Control U to upload a file. Control Shift A to capture screenshot and run OCR. Control H to repeat instructions anytime.");
+      speakFeedback("Lumina is ready. Shortcuts: Control U to upload a file. Control Shift A to capture screenshot and run OCR. Control M toggles broadcast voice. Control H repeats shortcut help.");
     }
   };
 
@@ -1233,217 +1009,19 @@ export default function App() {
         onClick={handleInitialInteraction}
         onKeyDown={handleInitialInteraction}
         tabIndex={0}
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          backgroundColor: "#0d1117",
-          color: "#e8f0f8",
-          fontFamily: "sans-serif",
-          cursor: "pointer"
-        }}
+        className="welcome-shell"
       >
-        <div style={{ textAlign: "center", padding: "2rem", border: "2px solid #3c5268", borderRadius: "12px", backgroundColor: "#1b2938" }}>
-          <h1 style={{ marginBottom: "1rem" }}>Welcome to the Accessible OCR App</h1>
-          <p style={{ fontSize: "1.3rem", color: "#8fa4bc" }}>Click anywhere or press any key to start and enable audio.</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (activePage === "whisper-test") {
-    return (
-      <div style={{ padding: "2rem", maxWidth: "900px", margin: "0 auto", fontFamily: "sans-serif" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.2rem" }}>
-          <h1>Whisper Test</h1>
-          <button
-            onClick={backToMainPage}
-            style={{
-              padding: "0.5rem 0.9rem",
-              borderRadius: "8px",
-              border: "1px solid #3c5268",
-              color: "#d3dfeb",
-              backgroundColor: "#1b2938",
-              fontWeight: "bold",
-            }}
-          >
-            Back
-          </button>
-        </div>
-
-        <p style={{ color: "#a8bbcf", marginBottom: "1rem" }}>
-          Record your voice, send to Whisper, and inspect raw transcription text only.
-        </p>
-
-        <div style={{ display: "flex", gap: "0.7rem", flexWrap: "wrap", marginBottom: "1rem" }}>
-          {!whisperTestRecording ? (
-            <button
-              onClick={startWhisperTestRecording}
-              disabled={whisperTestTranscribing}
-              style={{
-                padding: "0.6rem 1rem",
-                borderRadius: "8px",
-                border: "none",
-                backgroundColor: "#3ecfcf",
-                color: "#080b0f",
-                fontWeight: "bold",
-                opacity: whisperTestTranscribing ? 0.6 : 1,
-                cursor: whisperTestTranscribing ? "not-allowed" : "pointer",
-              }}
-            >
-              Start Recording
-            </button>
-          ) : (
-            <button
-              onClick={stopWhisperTestRecording}
-              style={{
-                padding: "0.6rem 1rem",
-                borderRadius: "8px",
-                border: "none",
-                backgroundColor: "#ff7c3e",
-                color: "#080b0f",
-                fontWeight: "bold",
-              }}
-            >
-              Stop Recording
-            </button>
-          )}
-          <button
-            onClick={() => {
-              setWhisperTestText("");
-              setWhisperTestError(null);
-              setWhisperTestHistory([]);
-              setWhisperTestMeta(null);
-              setMicLevel(0);
-              setMicPeak(0);
-              whisperTestPeakRef.current = 0;
-              clearWhisperTestPlayback();
-            }}
-            style={{
-              padding: "0.6rem 1rem",
-              borderRadius: "8px",
-              border: "1px solid #3c5268",
-              color: "#d3dfeb",
-              backgroundColor: "#1b2938",
-              fontWeight: "bold",
-            }}
-          >
-            Clear
-          </button>
-          <button
-            onClick={toggleWhisperTestPlayback}
-            disabled={!whisperTestHasPlayback}
-            style={{
-              padding: "0.6rem 1rem",
-              borderRadius: "8px",
-              border: "1px solid #3c5268",
-              color: "#d3dfeb",
-              backgroundColor: "#1b2938",
-              fontWeight: "bold",
-              opacity: whisperTestHasPlayback ? 1 : 0.45,
-              cursor: whisperTestHasPlayback ? "pointer" : "not-allowed",
-            }}
-          >
-            {whisperTestPlaying ? "Stop Playback" : "Play Local Recording"}
-          </button>
-          <button
-            onClick={playSpeakerTestTone}
-            style={{
-              padding: "0.6rem 1rem",
-              borderRadius: "8px",
-              border: "1px solid #3c5268",
-              color: "#d3dfeb",
-              backgroundColor: "#1b2938",
-              fontWeight: "bold",
-            }}
-          >
-            Speaker Test Tone
-          </button>
-        </div>
-
-        <div style={{ marginBottom: "0.9rem" }}>
-          <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.45rem" }}>Microphone Device</div>
-          <select
-            value={selectedAudioInputId}
-            onChange={(e) => setSelectedAudioInputId(e.target.value)}
-            disabled={whisperTestRecording}
-            style={{
-              width: "100%",
-              padding: "0.55rem 0.65rem",
-              borderRadius: "8px",
-              border: "1px solid #3c5268",
-              backgroundColor: "#14202d",
-              color: "#d3dfeb",
-            }}
-          >
-            {audioInputs.length === 0 && (
-              <option value="">No microphone found</option>
-            )}
-            {audioInputs.map((device, idx) => (
-              <option key={device.deviceId || `device-${idx}`} value={device.deviceId}>
-                {device.label || `Microphone ${idx + 1}`}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div style={{ marginBottom: "0.9rem" }}>
-          <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.35rem" }}>
-            Mic Input Level (live while recording): current {micLevel.toFixed(3)} · peak {micPeak.toFixed(3)}
-          </div>
-          <div style={{ height: "10px", borderRadius: "999px", backgroundColor: "#172334", overflow: "hidden", border: "1px solid #2d3d52" }}>
-            <div
-              style={{
-                width: `${Math.max(2, Math.round(micLevel * 100))}%`,
-                height: "100%",
-                background: "linear-gradient(90deg, #3ef07a, #fcba03, #ff7c3e)",
-                transition: "width 120ms linear",
-              }}
-            />
-          </div>
-        </div>
-
-        {(whisperTestRecording || whisperTestTranscribing) && (
-          <div style={{ color: "#9fb1c5", marginBottom: "1rem" }}>
-            {whisperTestRecording ? "Recording..." : "Transcribing via Whisper..."}
-          </div>
-        )}
-
-        {whisperTestMeta && (
-          <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.8rem" }}>
-            Last audio: {whisperTestMeta.bytes} bytes · {Math.round(whisperTestMeta.durationMs)} ms · {whisperTestMeta.mimeType} · peak {whisperTestMeta.peak?.toFixed(3)} · {whisperTestMeta.inputDevice}
-          </div>
-        )}
-
-        {whisperTestError && (
-          <div style={{ color: "#ffd0c0", backgroundColor: "#3c1c0f", padding: "0.8rem", borderRadius: "8px", marginBottom: "1rem" }}>
-            {whisperTestError}
-          </div>
-        )}
-
-        <div style={{ backgroundColor: "#121b26", border: "1px solid #263545", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
-          <div style={{ color: "#8fa4bc", fontSize: "0.85rem", marginBottom: "0.5rem" }}>Latest Transcription</div>
-          <div style={{ color: "#e8f0f8", fontSize: "1rem", minHeight: "2rem", whiteSpace: "pre-wrap" }}>
-            {whisperTestText || "(no transcription yet)"}
-          </div>
-        </div>
-
-        <div style={{ backgroundColor: "#0f1620", border: "1px solid #2b3a4d", borderRadius: "10px", padding: "1rem" }}>
-          <div style={{ color: "#8fa4bc", fontSize: "0.85rem", marginBottom: "0.6rem" }}>History</div>
-          <div style={{ maxHeight: "320px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-            {whisperTestHistory.length === 0 && (
-              <div style={{ color: "#8fa4bc" }}>No records yet.</div>
-            )}
-            {whisperTestHistory.map((item, idx) => (
-              <div key={`${item.timestamp}-${idx}`} style={{ backgroundColor: "#182433", border: "1px solid #2b3a4d", borderRadius: "8px", padding: "0.7rem" }}>
-                <div style={{ color: "#7f97b0", fontSize: "0.72rem", marginBottom: "0.2rem" }}>
-                  {new Date(item.timestamp).toLocaleString()} · {item.bytes} bytes · {Math.round(item.durationMs || 0)} ms · {item.mimeType || "unknown"} · peak {(item.peak || 0).toFixed(3)}
-                </div>
-                <div style={{ color: "#7f97b0", fontSize: "0.72rem", marginBottom: "0.2rem" }}>{item.inputDevice || "(unknown input)"}</div>
-                <div style={{ color: "#e8f0f8", whiteSpace: "pre-wrap" }}>{item.text}</div>
-              </div>
-            ))}
+        <div className="welcome-card">
+          <span className="welcome-tag mono">Accessibility First</span>
+          <h1 className="welcome-title">Lumina</h1>
+          <p className="welcome-subtitle">
+            Click anywhere or press any key to start. Lumina is tuned for high contrast, keyboard-first control, and voice feedback.
+          </p>
+          <div className="hotkey-grid">
+            <span className="hotkey-chip"><kbd>Ctrl/Cmd + U</kbd>Upload file</span>
+            <span className="hotkey-chip"><kbd>Ctrl/Cmd + Shift + A</kbd>Capture OCR</span>
+            <span className="hotkey-chip"><kbd>Ctrl/Cmd + K</kbd>Read document</span>
+            <span className="hotkey-chip"><kbd>Ctrl + M</kbd>Toggle broadcast</span>
           </div>
         </div>
       </div>
@@ -1451,8 +1029,8 @@ export default function App() {
   }
 
   return (
-    <div style={{ padding: "2rem", maxWidth: "800px", margin: "0 auto", fontFamily: "sans-serif", minHeight: "100vh" }}>
-      <div aria-live="polite" aria-atomic="true" style={{ position: "absolute", width: "1px", height: "1px", padding: 0, margin: "-1px", overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}>
+    <div className="app-shell">
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
         {loading ? "Processing document. Please wait." : ""}
         {summarizing ? "Generating summary." : ""}
         {isRecording ? "Listening to your question." : ""}
@@ -1462,215 +1040,111 @@ export default function App() {
         {ttsError ? "Audio Error: " + ttsError : ""}
         {tutorError ? "Tutor Error: " + tutorError : ""}
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
-        <h1>Simple Upload & OCR</h1>
-        <button
-          onClick={openWhisperTestPage}
-          style={{
-            padding: "0.5rem 0.9rem",
-            borderRadius: "8px",
-            border: "1px solid #3c5268",
-            color: "#d3dfeb",
-            backgroundColor: "#1b2938",
-            fontWeight: "bold",
-          }}
-        >
-          Whisper Test Page
+
+      <div className="topbar">
+        <div className="title-wrap">
+          <h1>Lumina</h1>
+          <p>High-contrast OCR, summarization, read-aloud, and voice Q&A in one workspace.</p>
+        </div>
+        <button onClick={toggleBroadcast} className={`btn ${broadcastEnabled ? "btn-primary" : "btn-ghost"}`}>
+          Broadcast: {broadcastEnabled ? "On" : "Off"} (Ctrl+M)
         </button>
       </div>
-      <div style={{ marginBottom: "1.5rem", display: "flex", alignItems: "center", gap: "1rem" }}>
-        <input
-          type="file"
-          ref={fileInputRef}
-          onChange={(e) => {
-            const selectedFile = e.target.files[0];
-            if (selectedFile) {
-              setFile(selectedFile);
-              // Since state updates are async, we can't just call handleUpload() directly here reliably
-              // without it using the *old* state of `file`. The effect hook handles it.
-            }
-          }}
-          style={{ color: "var(--text, black)" }}
-        />
-        {/* The upload button is hidden because the process is now automatic, 
-            but kept in the DOM if needed for fallback accessibility later */}
-        {loading && (
-          <div style={{ color: "#3ecfcf", fontWeight: "bold" }}>
-            Processing document automatically...
-          </div>
-        )}
+
+      <div className="panel upload-panel">
+        <div className="upload-row">
+          <input
+            type="file"
+            ref={fileInputRef}
+            className="hidden-file-input"
+            onChange={(e) => {
+              const selectedFile = e.target.files[0];
+              if (selectedFile) {
+                setFile(selectedFile);
+              }
+            }}
+          />
+          <button onClick={() => fileInputRef.current?.click()} className="btn btn-primary">
+            Choose File
+          </button>
+          <span className="info-line small" style={{ margin: 0 }}>
+            {file ? `Selected: ${file.name}` : "Supports images and PDF. Processing starts automatically after selection."}
+          </span>
+          {loading && (
+            <span className="status-pill">
+              <span className="status-dot" /> Processing document...
+            </span>
+          )}
+        </div>
+        <div className="upload-meta mono">Shortcuts: Ctrl/Cmd + U upload, Ctrl/Cmd + Shift + A capture OCR, Ctrl + M broadcast toggle</div>
       </div>
 
       {error && (
-        <div style={{ color: "#d32f2f", backgroundColor: "#ffebee", padding: "1rem", borderRadius: "8px", marginBottom: "1rem" }}>
+        <div className="alert alert-error">
           <strong>Error: </strong> {error}
         </div>
       )}
 
       {resultText && (
-        <div>
-          <h2>Document Processed</h2>
+        <div className="panel" style={{ padding: "14px" }}>
+          <div className="section-title">
+            <h2>Document Processed</h2>
+          </div>
 
           {processedImages && processedImages.length > 0 && (
-            <div style={{ marginBottom: "1.5rem" }}>
-              <h3 style={{ marginBottom: "0.5rem" }}>Images (Screenshots/Uploads)</h3>
-              <div style={{ display: "flex", gap: "1rem", overflowX: "auto", paddingBottom: "0.5rem" }}>
+            <div style={{ marginBottom: "14px" }}>
+              <div className="section-title">
+                <h3>Images (Screenshots / Uploads)</h3>
+              </div>
+              <div className="image-strip">
                 {processedImages.map((base64Img, idx) => (
                   <img
                     key={idx}
                     src={`data:image/png;base64,${base64Img}`}
                     alt={`Processed document page ${idx + 1}`}
-                    style={{
-                      maxHeight: "300px",
-                      borderRadius: "8px",
-                      border: "1px solid #3c5268",
-                      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                    }}
+                    className="image-thumb"
                   />
                 ))}
               </div>
             </div>
           )}
 
-          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
-            <button
-              onClick={() => setShowOcrText(!showOcrText)}
-              style={{
-                padding: "0.5rem 1rem",
-                cursor: "pointer",
-                backgroundColor: "#2a3b4c",
-                color: "#e8f0f8",
-                border: "1px solid #3c5268",
-                borderRadius: "8px",
-                fontWeight: "bold",
-              }}
-            >
+          <div className="button-row">
+            <button onClick={() => setShowOcrText(!showOcrText)} className="btn btn-ghost">
               {showOcrText ? "Hide Transcription" : "Show Transcription"}
             </button>
           </div>
 
-          {showOcrText && (
-            <pre style={{
-              whiteSpace: "pre-wrap",
-              backgroundColor: "#1e2836",
-              color: "#e8f0f8",
-              padding: "1.5rem",
-              borderRadius: "8px",
-              border: "1px solid #263545",
-              marginTop: "1rem",
-              marginBottom: "1rem"
-            }}>
-              {resultText}
-            </pre>
-          )}
+          {showOcrText && <pre className="text-block">{resultText}</pre>}
 
-          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
-            <button
-              onClick={handleSummarize}
-              disabled={summarizing}
-              style={{
-                padding: "0.5rem 1rem",
-                cursor: summarizing ? "not-allowed" : "pointer",
-                backgroundColor: "#fcba03",
-                color: "#080b0f",
-                border: "none",
-                borderRadius: "8px",
-                fontWeight: "bold",
-              }}
-            >
+          <div className="button-row">
+            <button onClick={handleSummarize} disabled={summarizing} className="btn btn-warning">
               {summarizing ? "Summarizing..." : "Summarize"}
             </button>
 
             {!isReading || readingTarget !== "ocr" ? (
-              <button
-                onClick={() => startReading(resultText, "ocr")}
-                style={{
-                  padding: "0.5rem 1rem",
-                  cursor: "pointer",
-                  backgroundColor: "#3ef07a",
-                  color: "#080b0f",
-                  border: "none",
-                  borderRadius: "8px",
-                  fontWeight: "bold",
-                }}
-              >
+              <button onClick={() => startReading(resultText, "ocr")} className="btn btn-success">
                 {isReading ? "Switch To OCR Read" : "Read OCR Aloud"}
               </button>
             ) : (
               <>
-                <button
-                  onClick={togglePauseReading}
-                  style={{
-                    padding: "0.5rem 1rem",
-                    cursor: "pointer",
-                    backgroundColor: isPaused ? "#3ef07a" : "#ff7c3e",
-                    color: "#080b0f",
-                    border: "none",
-                    borderRadius: "8px",
-                    fontWeight: "bold",
-                  }}
-                >
+                <button onClick={togglePauseReading} className={`btn ${isPaused ? "btn-success" : "btn-danger"}`}>
                   {isPaused ? "Resume OCR (Space)" : "Pause OCR (Space)"}
                 </button>
-                <button
-                  onClick={stopReading}
-                  style={{
-                    padding: "0.5rem 1rem",
-                    cursor: "pointer",
-                    backgroundColor: "#9ba7b4",
-                    color: "#080b0f",
-                    border: "none",
-                    borderRadius: "8px",
-                    fontWeight: "bold",
-                  }}
-                >
+                <button onClick={stopReading} className="btn btn-ghost">
                   Stop OCR
                 </button>
               </>
             )}
           </div>
 
-          <div style={{ marginBottom: "1rem" }}>
-            <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.35rem" }}>
-              TTS Speed: {ttsSpeed.toFixed(2)}x
-            </div>
-            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-              {TTS_SPEED_OPTIONS.map((speedOption) => {
-                const active = Math.abs(ttsSpeed - speedOption) < 0.001;
-                return (
-                  <button
-                    key={speedOption}
-                    onClick={() => setTtsSpeed(speedOption)}
-                    style={{
-                      padding: "0.35rem 0.6rem",
-                      borderRadius: "7px",
-                      border: `1px solid ${active ? "#3ecfcf" : "#3c5268"}`,
-                      backgroundColor: active ? "rgba(62,207,207,0.14)" : "#1b2938",
-                      color: active ? "#e8f0f8" : "#d3dfeb",
-                      fontWeight: "bold",
-                      fontSize: "0.78rem",
-                    }}
-                  >
-                    {speedOption}x
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           {(isReading || ttsChunkCount > 0 || ttsChunks.length > 0) && (
-            <div style={{
-              backgroundColor: "#151d26",
-              border: "1px solid #263545",
-              borderRadius: "8px",
-              padding: "1rem",
-              marginBottom: "1rem"
-            }}>
-              <div style={{ marginBottom: "0.75rem", color: "#8fa4bc", fontSize: "0.9rem" }}>
+            <div className="chunk-panel">
+              <div className="chunk-head">
                 {ttsSourceLabel ? `${ttsSourceLabel} Read-Aloud Chunks` : "Read-Aloud Chunks"} ({ttsChunkCount || ttsChunks.length})
                 {isReading && isPaused ? " - Paused" : ""}
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", maxHeight: "280px", overflowY: "auto" }}>
+              <div className="chunk-list">
                 {Array.from({ length: ttsChunkCount || ttsChunks.length }).map((_, idx) => {
                   const chunkText = ttsChunks[idx] || `Chunk ${idx + 1} generating...`;
                   const isActive = currentChunkIndex === idx;
@@ -1678,15 +1152,7 @@ export default function App() {
                   return (
                     <div
                       key={idx}
-                      style={{
-                        padding: "0.6rem 0.75rem",
-                        borderRadius: "8px",
-                        border: `1px solid ${isActive ? "#3ecfcf" : "#263545"}`,
-                        backgroundColor: isActive ? "rgba(62, 207, 207, 0.14)" : (isRead ? "#0e141b" : "#111923"),
-                        color: isActive ? "#e8f0f8" : "#b8c6d5",
-                        fontSize: "0.86rem",
-                        lineHeight: 1.5
-                      }}
+                      className={`chunk-item ${isActive ? "active" : ""} ${isRead ? "read" : ""}`}
                     >
                       {chunkText}
                     </div>
@@ -1697,82 +1163,41 @@ export default function App() {
           )}
 
           {ttsError && (
-            <div style={{ color: "#ffd0c0", backgroundColor: "#3c1c0f", padding: "0.75rem", borderRadius: "8px", marginBottom: "1rem" }}>
+            <div className="alert alert-error">
               <strong>TTS: </strong>{ttsError}
             </div>
           )}
 
           {summaryText && (
             <div>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem", flexWrap: "wrap" }}>
+              <div className="section-title">
                 <h3>Summary</h3>
-                {!isReading || readingTarget !== "summary" ? (
-                  <button
-                    onClick={() => startReading(getSummaryReadableText(), "summary")}
-                    style={{
-                      padding: "0.35rem 0.75rem",
-                      cursor: "pointer",
-                      backgroundColor: "#3e9fff",
-                      color: "#080b0f",
-                      border: "none",
-                      borderRadius: "8px",
-                      fontWeight: "bold",
-                      fontSize: "0.8rem",
-                    }}
-                  >
-                    Read Summary Aloud
-                  </button>
-                ) : (
-                  <button
-                    onClick={togglePauseReading}
-                    style={{
-                      padding: "0.35rem 0.75rem",
-                      cursor: "pointer",
-                      backgroundColor: isPaused ? "#3ef07a" : "#ff7c3e",
-                      color: "#080b0f",
-                      border: "none",
-                      borderRadius: "8px",
-                      fontWeight: "bold",
-                      fontSize: "0.8rem",
-                    }}
-                  >
-                    {isPaused ? "Resume Summary (Space)" : "Pause Summary (Space)"}
-                  </button>
-                )}
-                {isReading && readingTarget === "summary" && (
-                  <button
-                    onClick={stopReading}
-                    style={{
-                      padding: "0.35rem 0.75rem",
-                      cursor: "pointer",
-                      backgroundColor: "#ff7c3e",
-                      color: "#080b0f",
-                      border: "none",
-                      borderRadius: "8px",
-                      fontWeight: "bold",
-                      fontSize: "0.8rem",
-                    }}
-                  >
-                    Stop Summary
-                  </button>
-                )}
+                <div className="button-row" style={{ marginBottom: 0 }}>
+                  {!isReading || readingTarget !== "summary" ? (
+                    <button onClick={() => startReading(getSummaryReadableText(), "summary")} className="btn btn-info btn-xs">
+                      Read Summary Aloud
+                    </button>
+                  ) : (
+                    <button onClick={togglePauseReading} className={`btn btn-xs ${isPaused ? "btn-success" : "btn-danger"}`}>
+                      {isPaused ? "Resume Summary (Space)" : "Pause Summary (Space)"}
+                    </button>
+                  )}
+                  {isReading && readingTarget === "summary" && (
+                    <button onClick={stopReading} className="btn btn-xs btn-ghost">
+                      Stop Summary
+                    </button>
+                  )}
+                </div>
               </div>
-              <div style={{
-                backgroundColor: "#2a3b4c",
-                color: "#e8f0f8",
-                padding: "1.5rem",
-                borderRadius: "8px",
-                border: "1px solid #3c5268",
-                marginTop: "0.5rem"
-              }}>
-                {summaryText.takeaways ? (
-                  <ul style={{ margin: 0, paddingLeft: "1.5rem" }}>
+              <div className="summary-box">
+                {Array.isArray(summaryText?.takeaways) ? (
+                  <ul className="summary-list">
                     {summaryText.takeaways.map((point, i) => (
-                      <li key={i} style={{ marginBottom: "0.5rem", lineHeight: "1.5" }}>{point}</li>
+                      <li key={i}>{point}</li>
                     ))}
                   </ul>
                 ) : (
-                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                  <pre className="text-block" style={{ marginBottom: 0 }}>
                     {JSON.stringify(summaryText, null, 2)}
                   </pre>
                 )}
@@ -1783,84 +1208,36 @@ export default function App() {
       )}
 
       {(resultText || summaryText) && (
-        <div
-          style={{
-            position: "fixed",
-            right: "20px",
-            bottom: "20px",
-            width: "360px",
-            maxWidth: "calc(100vw - 40px)",
-            backgroundColor: "#0f1620",
-            border: "1px solid #2b3a4d",
-            borderRadius: "12px",
-            padding: "12px",
-            boxShadow: "0 16px 40px rgba(0,0,0,0.35)",
-            zIndex: 40,
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-            <strong style={{ color: "#e8f0f8", fontSize: "0.95rem" }}>Tutor Q&A</strong>
-            <span style={{ color: "#8fa4bc", fontSize: "0.75rem" }}>Multi-turn</span>
+        <div className="floating-tutor">
+          <div className="tutor-head">
+            <strong>Tutor Q&A</strong>
+            <span>Multi-turn</span>
           </div>
 
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
+          <div className="button-row" style={{ marginBottom: "8px" }}>
             {!isRecording ? (
               <button
                 onClick={startRecordingQuestion}
                 disabled={isTranscribing || isTutorThinking}
-                style={{
-                  padding: "0.4rem 0.7rem",
-                  borderRadius: "8px",
-                  border: "none",
-                  backgroundColor: "#3ecfcf",
-                  color: "#080b0f",
-                  fontWeight: "bold",
-                  fontSize: "0.78rem",
-                  cursor: isTranscribing || isTutorThinking ? "not-allowed" : "pointer",
-                  opacity: isTranscribing || isTutorThinking ? 0.6 : 1,
-                }}
+                className="btn btn-primary btn-xs"
               >
                 Start Voice Question
               </button>
             ) : (
-              <button
-                onClick={stopRecordingQuestion}
-                style={{
-                  padding: "0.4rem 0.7rem",
-                  borderRadius: "8px",
-                  border: "none",
-                  backgroundColor: "#ff7c3e",
-                  color: "#080b0f",
-                  fontWeight: "bold",
-                  fontSize: "0.78rem",
-                  cursor: "pointer",
-                }}
-              >
+              <button onClick={stopRecordingQuestion} className="btn btn-danger btn-xs">
                 Stop Recording
               </button>
             )}
 
             {isReading && (
-              <button
-                onClick={togglePauseReading}
-                style={{
-                  padding: "0.4rem 0.7rem",
-                  borderRadius: "8px",
-                  border: "1px solid #3b4a5d",
-                  backgroundColor: "#162130",
-                  color: "#d3dfeb",
-                  fontWeight: "bold",
-                  fontSize: "0.78rem",
-                  cursor: "pointer",
-                }}
-              >
+              <button onClick={togglePauseReading} className="btn btn-ghost btn-xs">
                 {isPaused ? "Continue Reading" : "Pause Reading"}
               </button>
             )}
           </div>
 
           {(isRecording || isTranscribing || isTutorThinking) && (
-            <div style={{ color: "#9fb1c5", fontSize: "0.76rem", marginBottom: "8px" }}>
+            <div className="tutor-status">
               {isRecording
                 ? "Recording... click Stop Recording when done."
                 : isTranscribing
@@ -1869,52 +1246,23 @@ export default function App() {
             </div>
           )}
 
-          {tutorError && (
-            <div style={{ color: "#ffd0c0", backgroundColor: "#3c1c0f", padding: "0.5rem", borderRadius: "8px", marginBottom: "8px", fontSize: "0.78rem" }}>
-              {tutorError}
-            </div>
-          )}
+          {tutorError && <div className="alert alert-error">{tutorError}</div>}
 
-          <div
-            style={{
-              maxHeight: "220px",
-              overflowY: "auto",
-              display: "flex",
-              flexDirection: "column",
-              gap: "6px",
-              paddingTop: "2px",
-            }}
-          >
+          <div className="tutor-history">
             {tutorMessages.length === 0 && (
-              <div style={{ color: "#8fa4bc", fontSize: "0.78rem" }}>
+              <div className="tutor-empty">
                 Ask by voice about what was just read. Space pauses/resumes reading.
               </div>
             )}
             {tutorMessages.map((msg, idx) => (
-              <div
-                key={`${msg.role}-${idx}`}
-                style={{
-                  alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-                  backgroundColor: msg.role === "user" ? "#1f374d" : "#1a2634",
-                  color: "#e8f0f8",
-                  border: "1px solid #2b3a4d",
-                  borderRadius: "8px",
-                  padding: "0.5rem 0.6rem",
-                  fontSize: "0.8rem",
-                  lineHeight: 1.45,
-                  maxWidth: "95%",
-                }}
-              >
-                <div style={{ opacity: 0.75, fontSize: "0.68rem", marginBottom: "2px" }}>
-                  {msg.role === "user" ? "You" : "Tutor"}
-                </div>
+              <div key={`${msg.role}-${idx}`} className={`tutor-bubble ${msg.role === "user" ? "user" : ""}`}>
+                <div className="tutor-role">{msg.role === "user" ? "You" : "Tutor"}</div>
                 {msg.text}
               </div>
             ))}
           </div>
         </div>
-      )
-      }
-    </div >
+      )}
+    </div>
   );
 }
