@@ -17,7 +17,6 @@ export default function App() {
   const [ttsChunkCount, setTtsChunkCount] = useState(0);
   const [ttsChunks, setTtsChunks] = useState([]);
   const [currentChunkIndex, setCurrentChunkIndex] = useState(null);
-  const [ttsSpeed, setTtsSpeed] = useState(1.0);
   const [readingTarget, setReadingTarget] = useState(null);
   const [ttsSourceLabel, setTtsSourceLabel] = useState("");
   const [tutorMessages, setTutorMessages] = useState([]);
@@ -27,7 +26,8 @@ export default function App() {
   const [tutorError, setTutorError] = useState(null);
   const [broadcastEnabled, setBroadcastEnabled] = useState(true);
   const OCR_CONCURRENCY = 3;
-  const TTS_SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0];
+  const TTS_SPEED = 1.0;
+  const TTS_GAIN_BOOST = 2.3;
 
   const eventSourceRef = useRef(null);
   const streamSessionIdRef = useRef("");
@@ -45,6 +45,11 @@ export default function App() {
   const recordingStreamRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const tutorAudioRef = useRef(null);
+  const currentAudioBoostCleanupRef = useRef(() => { });
+  const tutorAudioBoostCleanupRef = useRef(() => { });
+  const ttsAudioContextRef = useRef(null);
+  const ttsGainNodeRef = useRef(null);
+  const ttsCompressorRef = useRef(null);
   const togglePauseReadingRef = useRef(() => { });
   const pauseReadingRef = useRef(() => { });
   const isReadingRef = useRef(false);
@@ -107,11 +112,69 @@ export default function App() {
   };
 
   const stopTutorAnswerAudio = () => {
+    tutorAudioBoostCleanupRef.current();
+    tutorAudioBoostCleanupRef.current = () => { };
     if (tutorAudioRef.current) {
       tutorAudioRef.current.pause();
       tutorAudioRef.current.src = "";
       tutorAudioRef.current = null;
     }
+  };
+
+  const ensureTtsAudioProcessing = () => {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) return null;
+    if (!ttsAudioContextRef.current) {
+      const ctx = new AudioContextCtor();
+      const gain = ctx.createGain();
+      gain.gain.value = TTS_GAIN_BOOST;
+      const compressor = ctx.createDynamicsCompressor();
+      compressor.threshold.value = -20;
+      compressor.knee.value = 20;
+      compressor.ratio.value = 3;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.2;
+      gain.connect(compressor);
+      compressor.connect(ctx.destination);
+      ttsAudioContextRef.current = ctx;
+      ttsGainNodeRef.current = gain;
+      ttsCompressorRef.current = compressor;
+    }
+    if (ttsAudioContextRef.current.state === "suspended") {
+      ttsAudioContextRef.current.resume().catch(() => { });
+    }
+    return {
+      ctx: ttsAudioContextRef.current,
+      gain: ttsGainNodeRef.current,
+    };
+  };
+
+  const attachTtsBoost = (audioElement) => {
+    const chain = ensureTtsAudioProcessing();
+    if (!chain) return () => { };
+    try {
+      const sourceNode = chain.ctx.createMediaElementSource(audioElement);
+      sourceNode.connect(chain.gain);
+      return () => {
+        try {
+          sourceNode.disconnect();
+        } catch {
+          // no-op
+        }
+      };
+    } catch (err) {
+      console.warn("TTS boost hookup skipped:", err);
+      return () => { };
+    }
+  };
+
+  const releaseTtsAudioProcessing = () => {
+    if (ttsAudioContextRef.current) {
+      ttsAudioContextRef.current.close().catch(() => { });
+    }
+    ttsAudioContextRef.current = null;
+    ttsGainNodeRef.current = null;
+    ttsCompressorRef.current = null;
   };
 
   const releaseRecorder = () => {
@@ -128,6 +191,8 @@ export default function App() {
   };
 
   const clearAudio = () => {
+    currentAudioBoostCleanupRef.current();
+    currentAudioBoostCleanupRef.current = () => { };
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current.src = "";
@@ -211,14 +276,19 @@ export default function App() {
     const mimeType = nextChunk.mimeType || ttsMimeTypeRef.current || "audio/wav";
     const audio = new Audio(`data:${mimeType};base64,${nextChunk.audioBase64}`);
     currentAudioRef.current = audio;
+    currentAudioBoostCleanupRef.current = attachTtsBoost(audio);
 
     audio.onended = () => {
+      currentAudioBoostCleanupRef.current();
+      currentAudioBoostCleanupRef.current = () => { };
       isPlayingRef.current = false;
       currentAudioRef.current = null;
       playNextChunk();
     };
 
     audio.onerror = () => {
+      currentAudioBoostCleanupRef.current();
+      currentAudioBoostCleanupRef.current = () => { };
       isPlayingRef.current = false;
       currentAudioRef.current = null;
       setTtsError(`Chunk ${nextChunk.chunkIndex + 1} playback failed`);
@@ -312,7 +382,7 @@ export default function App() {
           body: JSON.stringify({
             streamId,
             markdown: textToRead,
-            speed: String(ttsSpeed),
+            speed: String(TTS_SPEED),
           }),
           signal: abortController.signal,
         });
@@ -483,7 +553,7 @@ export default function App() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text: answerText, speed: ttsSpeed, priority: "interactive" }),
+      body: JSON.stringify({ text: answerText, speed: TTS_SPEED, priority: "interactive" }),
     });
     if (!ttsRes.ok) {
       const fallback = await ttsRes.text();
@@ -499,11 +569,16 @@ export default function App() {
     }
     const answerAudio = new Audio(audioUrl);
     tutorAudioRef.current = answerAudio;
+    tutorAudioBoostCleanupRef.current = attachTtsBoost(answerAudio);
     answerAudio.onended = () => {
+      tutorAudioBoostCleanupRef.current();
+      tutorAudioBoostCleanupRef.current = () => { };
       URL.revokeObjectURL(audioUrl);
       tutorAudioRef.current = null;
     };
     answerAudio.onerror = () => {
+      tutorAudioBoostCleanupRef.current();
+      tutorAudioBoostCleanupRef.current = () => { };
       URL.revokeObjectURL(audioUrl);
       tutorAudioRef.current = null;
       setTutorError("Failed to play tutor audio response");
@@ -609,6 +684,7 @@ export default function App() {
     unmountCleanupRef.current = () => {
       stopTutorAnswerAudio();
       releaseRecorder();
+      releaseTtsAudioProcessing();
     };
   });
 
@@ -624,16 +700,24 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
 
     // Electron IPC handlers
+    let unsubscribeScreenCaptured;
+    let unsubscribeShortcutCapture;
     if (window.electronAPI) {
-      window.electronAPI.onScreenCaptured((base64Image) => {
+      unsubscribeScreenCaptured = window.electronAPI.onScreenCaptured((base64Image) => {
         handleImageUpload(base64Image, "screenshot.png", "image/png");
       });
-      window.electronAPI.onShortcutCapture(() => {
+      unsubscribeShortcutCapture = window.electronAPI.onShortcutCapture(() => {
       });
     }
 
     return () => {
       window.removeEventListener("keydown", onKeyDown);
+      if (typeof unsubscribeScreenCaptured === "function") {
+        unsubscribeScreenCaptured();
+      }
+      if (typeof unsubscribeShortcutCapture === "function") {
+        unsubscribeShortcutCapture();
+      }
       closeStream();
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
@@ -821,7 +905,7 @@ export default function App() {
         speakFeedback("Reading paused");
       }
     } else if (resultText) {
-      await speakFeedback("OCR chunk processing started. Generating read aloud audio.");
+      void speakFeedback("OCR chunk processing started. Generating read aloud audio.");
       startReading(resultText, "ocr");
     } else {
       speakFeedback("No document is currently available to read.");
@@ -839,7 +923,7 @@ export default function App() {
         speakFeedback("Reading paused");
       }
     } else if (summaryText) {
-      await speakFeedback("Summary chunk processing started. Generating read aloud audio.");
+      void speakFeedback("Summary chunk processing started. Generating read aloud audio.");
       startReading(getSummaryReadableText(), "summary");
     } else {
       speakFeedback("No summary has been generated yet.");
@@ -1052,22 +1136,6 @@ export default function App() {
                 </button>
               </>
             )}
-          </div>
-
-          <div className="speed-line">TTS Speed: {ttsSpeed.toFixed(2)}x</div>
-          <div className="speed-grid">
-            {TTS_SPEED_OPTIONS.map((speedOption) => {
-              const active = Math.abs(ttsSpeed - speedOption) < 0.001;
-              return (
-                <button
-                  key={speedOption}
-                  onClick={() => setTtsSpeed(speedOption)}
-                  className={`speed-btn ${active ? "active" : ""}`}
-                >
-                  {speedOption}x
-                </button>
-              );
-            })}
           </div>
 
           {(isReading || ttsChunkCount > 0 || ttsChunks.length > 0) && (
