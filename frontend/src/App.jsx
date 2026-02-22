@@ -3,7 +3,6 @@ import { useHotkeys } from "react-hotkeys-hook";
 import "./App.css";
 
 export default function App() {
-  const [activePage, setActivePage] = useState("main");
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -26,18 +25,7 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isTutorThinking, setIsTutorThinking] = useState(false);
   const [tutorError, setTutorError] = useState(null);
-  const [whisperTestRecording, setWhisperTestRecording] = useState(false);
-  const [whisperTestTranscribing, setWhisperTestTranscribing] = useState(false);
-  const [whisperTestError, setWhisperTestError] = useState(null);
-  const [whisperTestText, setWhisperTestText] = useState("");
-  const [whisperTestHistory, setWhisperTestHistory] = useState([]);
-  const [whisperTestMeta, setWhisperTestMeta] = useState(null);
-  const [whisperTestHasPlayback, setWhisperTestHasPlayback] = useState(false);
-  const [whisperTestPlaying, setWhisperTestPlaying] = useState(false);
-  const [audioInputs, setAudioInputs] = useState([]);
-  const [selectedAudioInputId, setSelectedAudioInputId] = useState("");
-  const [micLevel, setMicLevel] = useState(0);
-  const [micPeak, setMicPeak] = useState(0);
+  const [broadcastEnabled, setBroadcastEnabled] = useState(true);
   const OCR_CONCURRENCY = 3;
   const TTS_SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0];
 
@@ -60,26 +48,17 @@ export default function App() {
   const togglePauseReadingRef = useRef(() => { });
   const pauseReadingRef = useRef(() => { });
   const isReadingRef = useRef(false);
-  const whisperTestRecorderRef = useRef(null);
-  const whisperTestStreamRef = useRef(null);
-  const whisperTestChunksRef = useRef([]);
   const [hasInteracted, setHasInteracted] = useState(false);
-  const whisperTestStartedAtRef = useRef(0);
-  const whisperTestPlaybackAudioRef = useRef(null);
-  const whisperTestPlaybackUrlRef = useRef("");
-  const whisperTestMonitorAudioContextRef = useRef(null);
-  const whisperTestMonitorAnalyserRef = useRef(null);
-  const whisperTestMonitorSourceRef = useRef(null);
-  const whisperTestMonitorTimerRef = useRef(null);
-  const whisperTestPeakRef = useRef(0);
   const tutorStartedAtRef = useRef(0);
   const unmountCleanupRef = useRef(() => { });
   const fileInputRef = useRef(null);
+  const broadcastEnabledRef = useRef(true);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  const speakFeedback = useCallback((text) => {
+  const speakFeedback = useCallback((text, { force = false } = {}) => {
     return new Promise((resolve) => {
       if (!text) return resolve();
+      if (!force && !broadcastEnabledRef.current) return resolve();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.onend = resolve;
       // Also resolve on error so we don't hang if TTS fails
@@ -88,6 +67,18 @@ export default function App() {
       window.speechSynthesis.speak(utterance);
     });
   }, []);
+
+  const toggleBroadcast = useCallback(() => {
+    if (broadcastEnabledRef.current) {
+      window.speechSynthesis.cancel();
+      broadcastEnabledRef.current = false;
+      setBroadcastEnabled(false);
+      return;
+    }
+    broadcastEnabledRef.current = true;
+    setBroadcastEnabled(true);
+    speakFeedback("Broadcast voice is on.", { force: true });
+  }, [speakFeedback]);
 
   const closeStream = () => {
     if (eventSourceRef.current) {
@@ -121,56 +112,6 @@ export default function App() {
       tutorAudioRef.current.src = "";
       tutorAudioRef.current = null;
     }
-  };
-
-  const clearWhisperTestPlayback = () => {
-    if (whisperTestPlaybackAudioRef.current) {
-      whisperTestPlaybackAudioRef.current.pause();
-      whisperTestPlaybackAudioRef.current.src = "";
-      whisperTestPlaybackAudioRef.current = null;
-    }
-    if (whisperTestPlaybackUrlRef.current) {
-      URL.revokeObjectURL(whisperTestPlaybackUrlRef.current);
-      whisperTestPlaybackUrlRef.current = "";
-    }
-    setWhisperTestHasPlayback(false);
-    setWhisperTestPlaying(false);
-  };
-
-  const setWhisperTestPlaybackBlob = (audioBlob) => {
-    clearWhisperTestPlayback();
-    const url = URL.createObjectURL(audioBlob);
-    const audio = new Audio(url);
-    whisperTestPlaybackUrlRef.current = url;
-    whisperTestPlaybackAudioRef.current = audio;
-    audio.onended = () => {
-      setWhisperTestPlaying(false);
-    };
-    audio.onerror = () => {
-      setWhisperTestPlaying(false);
-      setWhisperTestError("Local playback failed");
-    };
-    setWhisperTestHasPlayback(true);
-  };
-
-  const toggleWhisperTestPlayback = () => {
-    const audio = whisperTestPlaybackAudioRef.current;
-    if (!audio) return;
-    if (whisperTestPlaying) {
-      audio.pause();
-      setWhisperTestPlaying(false);
-      return;
-    }
-    if (audio.ended || (audio.duration && audio.currentTime >= audio.duration - 0.05)) {
-      audio.currentTime = 0;
-    }
-    audio.play().then(() => {
-      setWhisperTestPlaying(true);
-    }).catch((err) => {
-      console.error(err);
-      setWhisperTestError("Local playback was blocked by browser");
-      setWhisperTestPlaying(false);
-    });
   };
 
   const releaseRecorder = () => {
@@ -497,227 +438,12 @@ export default function App() {
     return candidates.find((mime) => MediaRecorder.isTypeSupported(mime)) || "";
   };
 
-  const loadAudioInputDevices = async () => {
-    if (!navigator.mediaDevices?.enumerateDevices) return;
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const inputs = devices.filter((device) => device.kind === "audioinput");
-      setAudioInputs(inputs);
-      setSelectedAudioInputId((prev) => prev || inputs[0]?.deviceId || "");
-    } catch (err) {
-      console.error("Failed to enumerate audio devices:", err);
-    }
-  };
-
-  const stopWhisperTestMicMonitor = () => {
-    if (whisperTestMonitorTimerRef.current) {
-      clearInterval(whisperTestMonitorTimerRef.current);
-      whisperTestMonitorTimerRef.current = null;
-    }
-    if (whisperTestMonitorSourceRef.current) {
-      whisperTestMonitorSourceRef.current.disconnect();
-      whisperTestMonitorSourceRef.current = null;
-    }
-    if (whisperTestMonitorAnalyserRef.current) {
-      whisperTestMonitorAnalyserRef.current.disconnect();
-      whisperTestMonitorAnalyserRef.current = null;
-    }
-    if (whisperTestMonitorAudioContextRef.current) {
-      whisperTestMonitorAudioContextRef.current.close().catch(() => { });
-      whisperTestMonitorAudioContextRef.current = null;
-    }
-    setMicLevel(0);
-  };
-
-  const startWhisperTestMicMonitor = (stream) => {
-    stopWhisperTestMicMonitor();
-    try {
-      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextCtor) return;
-      const ctx = new AudioContextCtor();
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.15;
-      source.connect(analyser);
-      const data = new Uint8Array(analyser.fftSize);
-
-      whisperTestMonitorAudioContextRef.current = ctx;
-      whisperTestMonitorSourceRef.current = source;
-      whisperTestMonitorAnalyserRef.current = analyser;
-
-      whisperTestMonitorTimerRef.current = setInterval(() => {
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) {
-          const centered = (data[i] - 128) / 128;
-          sum += centered * centered;
-        }
-        const rms = Math.sqrt(sum / data.length);
-        const normalized = Math.min(1, rms * 6);
-        setMicLevel(normalized);
-        whisperTestPeakRef.current = Math.max(whisperTestPeakRef.current, normalized);
-        setMicPeak((prev) => Math.max(prev, normalized));
-      }, 120);
-    } catch (err) {
-      console.error("Mic monitor setup failed:", err);
-    }
-  };
-
-  const playSpeakerTestTone = () => {
-    try {
-      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextCtor) throw new Error("AudioContext unsupported");
-      const ctx = new AudioContextCtor();
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.value = 440;
-      gain.gain.value = 0.0001;
-      oscillator.connect(gain);
-      gain.connect(ctx.destination);
-      oscillator.start();
-      gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
-      oscillator.stop(ctx.currentTime + 0.42);
-      oscillator.onended = () => {
-        ctx.close().catch(() => { });
-      };
-    } catch (err) {
-      console.error(err);
-      setWhisperTestError("Could not play speaker test tone");
-    }
-  };
-
   const buildRecorder = (stream) => {
     const mimeType = pickAudioMimeType();
     if (mimeType) {
       return new MediaRecorder(stream, { mimeType });
     }
     return new MediaRecorder(stream);
-  };
-
-  const releaseWhisperTestRecorder = () => {
-    stopWhisperTestMicMonitor();
-    if (whisperTestRecorderRef.current) {
-      whisperTestRecorderRef.current.ondataavailable = null;
-      whisperTestRecorderRef.current.onstop = null;
-      whisperTestRecorderRef.current = null;
-    }
-    if (whisperTestStreamRef.current) {
-      whisperTestStreamRef.current.getTracks().forEach((track) => track.stop());
-      whisperTestStreamRef.current = null;
-    }
-    whisperTestChunksRef.current = [];
-  };
-
-  const stopWhisperTestRecording = () => {
-    if (!whisperTestRecorderRef.current || whisperTestRecorderRef.current.state === "inactive") return;
-    whisperTestRecorderRef.current.stop();
-    setWhisperTestRecording(false);
-  };
-
-  const startWhisperTestRecording = async () => {
-    if (whisperTestRecording || whisperTestTranscribing) return;
-    try {
-      setWhisperTestError(null);
-      setWhisperTestMeta(null);
-      stopTutorAnswerAudio();
-      setMicLevel(0);
-      setMicPeak(0);
-      whisperTestPeakRef.current = 0;
-
-      const audioConstraints = {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-        channelCount: 1,
-      };
-      if (selectedAudioInputId) {
-        audioConstraints.deviceId = { exact: selectedAudioInputId };
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-      whisperTestStreamRef.current = stream;
-      const recorder = buildRecorder(stream);
-      whisperTestRecorderRef.current = recorder;
-      whisperTestChunksRef.current = [];
-      whisperTestStartedAtRef.current = Date.now();
-      startWhisperTestMicMonitor(stream);
-      loadAudioInputDevices();
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          whisperTestChunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.onstop = async () => {
-        const durationMs = Date.now() - whisperTestStartedAtRef.current;
-        const audioBlob = new Blob(whisperTestChunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        releaseWhisperTestRecorder();
-        if (!audioBlob || audioBlob.size === 0) {
-          setWhisperTestError("No audio captured. Please record longer and speak closer to the mic.");
-          return;
-        }
-        setWhisperTestPlaybackBlob(audioBlob);
-        setWhisperTestMeta({
-          bytes: audioBlob.size,
-          durationMs,
-          mimeType: recorder.mimeType || "audio/webm",
-          inputDevice: stream.getAudioTracks()[0]?.label || "(unknown input)",
-          peak: whisperTestPeakRef.current,
-        });
-        const likelySilent = whisperTestPeakRef.current < 0.02;
-        if (likelySilent || durationMs < 900 || audioBlob.size < 1500) {
-          setWhisperTestError(`Recording too short or silent (${audioBlob.size} bytes, ${Math.round(durationMs)} ms, peak ${whisperTestPeakRef.current.toFixed(3)}). Check mic device and OS input level.`);
-          setWhisperTestText("(empty)");
-          setWhisperTestHistory((prev) => [
-            {
-              timestamp: new Date().toISOString(),
-              text: "(blocked: too short/silent)",
-              bytes: audioBlob.size,
-              durationMs,
-              mimeType: recorder.mimeType || "audio/webm",
-              inputDevice: stream.getAudioTracks()[0]?.label || "(unknown input)",
-              peak: whisperTestPeakRef.current,
-            },
-            ...prev,
-          ]);
-          return;
-        }
-        try {
-          setWhisperTestTranscribing(true);
-          const text = await transcribeAudioBlob(audioBlob, getAudioFileName(recorder.mimeType || ""));
-          setWhisperTestText(text || "(empty)");
-          setWhisperTestHistory((prev) => [
-            {
-              timestamp: new Date().toISOString(),
-              text: text || "(empty)",
-              bytes: audioBlob.size,
-              durationMs,
-              mimeType: recorder.mimeType || "audio/webm",
-              inputDevice: stream.getAudioTracks()[0]?.label || "(unknown input)",
-              peak: whisperTestPeakRef.current,
-            },
-            ...prev,
-          ]);
-        } catch (err) {
-          console.error(err);
-          setWhisperTestError(err.message || "Whisper test failed");
-        } finally {
-          setWhisperTestTranscribing(false);
-        }
-      };
-
-      recorder.start(250);
-      setWhisperTestRecording(true);
-    } catch (err) {
-      console.error(err);
-      setWhisperTestError("Microphone access failed");
-      releaseWhisperTestRecorder();
-      setWhisperTestRecording(false);
-    }
   };
 
   const askTutorAndSpeak = async (questionText) => {
@@ -883,8 +609,6 @@ export default function App() {
     unmountCleanupRef.current = () => {
       stopTutorAnswerAudio();
       releaseRecorder();
-      releaseWhisperTestRecorder();
-      clearWhisperTestPlayback();
     };
   });
 
@@ -918,22 +642,6 @@ export default function App() {
       unmountCleanupRef.current();
     };
   }, []);
-
-  useEffect(() => {
-    if (activePage !== "whisper-test") return;
-    loadAudioInputDevices();
-    const onDeviceChange = () => {
-      loadAudioInputDevices();
-    };
-    if (navigator.mediaDevices?.addEventListener) {
-      navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
-    }
-    return () => {
-      if (navigator.mediaDevices?.removeEventListener) {
-        navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
-      }
-    };
-  }, [activePage]);
 
   const handleImageUpload = (base64String, filename, mimeType) => {
     // Convert base64 to Blob
@@ -1101,25 +809,6 @@ export default function App() {
     }
   };
 
-  const openWhisperTestPage = () => {
-    stopReading();
-    stopTutorAnswerAudio();
-    releaseRecorder();
-    setIsRecording(false);
-    setIsTranscribing(false);
-    setIsTutorThinking(false);
-    setActivePage("whisper-test");
-  };
-
-  const backToMainPage = () => {
-    stopWhisperTestRecording();
-    releaseWhisperTestRecorder();
-    clearWhisperTestPlayback();
-    setWhisperTestRecording(false);
-    setWhisperTestTranscribing(false);
-    setActivePage("main");
-  };
-
   // --- HOTKEYS ---
   useHotkeys('ctrl+k, cmd+k', async (e) => {
     e.preventDefault();
@@ -1194,14 +883,17 @@ export default function App() {
     }
   }, { enableOnFormTags: true }, [resultText, summarizing]);
 
-
+  useHotkeys('ctrl+m', (e) => {
+    e.preventDefault();
+    toggleBroadcast();
+  }, { enableOnFormTags: true }, [toggleBroadcast]);
 
   useHotkeys('ctrl+h, cmd+h', (e) => {
     e.preventDefault();
     if (isReadingRef.current && !isPausedRef.current) {
       pauseReadingRef.current();
     }
-    speakFeedback("Shortcuts: Control K to read or pause document. Control L to read or pause summary. Control R to record a question. Control Shift A to capture a screenshot and run OCR. Control U to upload a file. Control S to summarize.");
+    speakFeedback("Shortcuts: Control K to read or pause document. Control L to read or pause summary. Control R to record a question. Control Shift A to capture a screenshot and run OCR. Control U to upload a file. Control S to summarize. Control M toggles broadcast voice.");
   }, { enableOnFormTags: true });
 
   // --- ACCESSIBILITY ANNOUNCEMENTS ---
@@ -1223,7 +915,7 @@ export default function App() {
   const handleInitialInteraction = () => {
     if (!hasInteracted) {
       setHasInteracted(true);
-      speakFeedback("Application loaded. Shortcuts: Control U to upload a file. Control Shift A to capture screenshot and run OCR. Control H to repeat instructions anytime.");
+      speakFeedback("Lumina is ready. Shortcuts: Control U to upload a file. Control Shift A to capture screenshot and run OCR. Control M toggles broadcast voice. Control H repeats shortcut help.");
     }
   };
 
@@ -1237,142 +929,15 @@ export default function App() {
       >
         <div className="welcome-card">
           <span className="welcome-tag mono">Accessibility First</span>
-          <h1 className="welcome-title">Accessible OCR Studio</h1>
+          <h1 className="welcome-title">Lumina</h1>
           <p className="welcome-subtitle">
-            点击任意位置或按任意键开始。界面支持高对比度、语音反馈和快捷键操作。
+            Click anywhere or press any key to start. Lumina is tuned for high contrast, keyboard-first control, and voice feedback.
           </p>
           <div className="hotkey-grid">
-            <span className="hotkey-chip"><kbd>Ctrl/Cmd + U</kbd>上传文件</span>
-            <span className="hotkey-chip"><kbd>Ctrl/Cmd + Shift + A</kbd>截图 OCR</span>
-            <span className="hotkey-chip"><kbd>Ctrl/Cmd + K</kbd>朗读正文</span>
-            <span className="hotkey-chip"><kbd>Ctrl/Cmd + H</kbd>播报快捷键帮助</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (activePage === "whisper-test") {
-    return (
-      <div className="app-shell">
-        <div className="topbar">
-          <div className="title-wrap">
-            <h1>Whisper Test Lab</h1>
-            <p>录音后直连 Whisper，检查原始转写结果与麦克风质量。</p>
-          </div>
-          <button onClick={backToMainPage} className="btn btn-secondary">Back to OCR</button>
-        </div>
-
-        <p className="whisper-note">你可以先做麦克风增益检查，再开始录音，结果会写入历史列表。</p>
-
-        <div className="button-row">
-          {!whisperTestRecording ? (
-            <button
-              onClick={startWhisperTestRecording}
-              disabled={whisperTestTranscribing}
-              className="btn btn-primary"
-            >
-              Start Recording
-            </button>
-          ) : (
-            <button onClick={stopWhisperTestRecording} className="btn btn-danger">
-              Stop Recording
-            </button>
-          )}
-
-          <button
-            onClick={() => {
-              setWhisperTestText("");
-              setWhisperTestError(null);
-              setWhisperTestHistory([]);
-              setWhisperTestMeta(null);
-              setMicLevel(0);
-              setMicPeak(0);
-              whisperTestPeakRef.current = 0;
-              clearWhisperTestPlayback();
-            }}
-            className="btn btn-ghost"
-          >
-            Clear
-          </button>
-
-          <button
-            onClick={toggleWhisperTestPlayback}
-            disabled={!whisperTestHasPlayback}
-            className="btn btn-ghost"
-          >
-            {whisperTestPlaying ? "Stop Playback" : "Play Local Recording"}
-          </button>
-
-          <button onClick={playSpeakerTestTone} className="btn btn-ghost">
-            Speaker Test Tone
-          </button>
-        </div>
-
-        <div style={{ marginBottom: "10px" }}>
-          <div className="info-line">Microphone Device</div>
-          <select
-            value={selectedAudioInputId}
-            onChange={(e) => setSelectedAudioInputId(e.target.value)}
-            disabled={whisperTestRecording}
-            className="select-control"
-          >
-            {audioInputs.length === 0 && (
-              <option value="">No microphone found</option>
-            )}
-            {audioInputs.map((device, idx) => (
-              <option key={device.deviceId || `device-${idx}`} value={device.deviceId}>
-                {device.label || `Microphone ${idx + 1}`}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="info-line">
-          Mic Input Level: current {micLevel.toFixed(3)} · peak {micPeak.toFixed(3)}
-        </div>
-        <div className="level-track">
-          <div className="level-fill" style={{ width: `${Math.max(2, Math.round(micLevel * 100))}%` }} />
-        </div>
-
-        {(whisperTestRecording || whisperTestTranscribing) && (
-          <div className="info-line">
-            {whisperTestRecording ? "Recording..." : "Transcribing via Whisper..."}
-          </div>
-        )}
-
-        {whisperTestMeta && (
-          <div className="info-line small">
-            Last audio: {whisperTestMeta.bytes} bytes · {Math.round(whisperTestMeta.durationMs)} ms · {whisperTestMeta.mimeType} · peak {whisperTestMeta.peak?.toFixed(3)} · {whisperTestMeta.inputDevice}
-          </div>
-        )}
-
-        {whisperTestError && (
-          <div className="alert alert-error">{whisperTestError}</div>
-        )}
-
-        <div className="panel" style={{ padding: "12px", marginBottom: "12px" }}>
-          <div className="info-line">Latest Transcription</div>
-          <div className="text-block" style={{ marginBottom: 0 }}>
-            {whisperTestText || "(no transcription yet)"}
-          </div>
-        </div>
-
-        <div className="panel" style={{ padding: "12px" }}>
-          <div className="info-line">History</div>
-          <div className="history-list">
-            {whisperTestHistory.length === 0 && (
-              <div className="tutor-empty">No records yet.</div>
-            )}
-            {whisperTestHistory.map((item, idx) => (
-              <div key={`${item.timestamp}-${idx}`} className="history-item">
-                <div className="history-meta">
-                  {new Date(item.timestamp).toLocaleString()} · {item.bytes} bytes · {Math.round(item.durationMs || 0)} ms · {item.mimeType || "unknown"} · peak {(item.peak || 0).toFixed(3)}
-                </div>
-                <div className="history-meta">{item.inputDevice || "(unknown input)"}</div>
-                <div className="text-block" style={{ marginBottom: 0, padding: "8px" }}>{item.text}</div>
-              </div>
-            ))}
+            <span className="hotkey-chip"><kbd>Ctrl/Cmd + U</kbd>Upload file</span>
+            <span className="hotkey-chip"><kbd>Ctrl/Cmd + Shift + A</kbd>Capture OCR</span>
+            <span className="hotkey-chip"><kbd>Ctrl/Cmd + K</kbd>Read document</span>
+            <span className="hotkey-chip"><kbd>Ctrl + M</kbd>Toggle broadcast</span>
           </div>
         </div>
       </div>
@@ -1394,10 +959,12 @@ export default function App() {
 
       <div className="topbar">
         <div className="title-wrap">
-          <h1>Accessible OCR Studio</h1>
-          <p>高对比度阅读、OCR、摘要、朗读和语音问答一体化工作台。</p>
+          <h1>Lumina</h1>
+          <p>High-contrast OCR, summarization, read-aloud, and voice Q&A in one workspace.</p>
         </div>
-        <button onClick={openWhisperTestPage} className="btn btn-secondary">Whisper Test Page</button>
+        <button onClick={toggleBroadcast} className={`btn ${broadcastEnabled ? "btn-primary" : "btn-ghost"}`}>
+          Broadcast: {broadcastEnabled ? "On" : "Off"} (Ctrl+M)
+        </button>
       </div>
 
       <div className="panel upload-panel">
@@ -1417,7 +984,7 @@ export default function App() {
             Choose File
           </button>
           <span className="info-line small" style={{ margin: 0 }}>
-            {file ? `Selected: ${file.name}` : "支持图片与 PDF；选择后自动处理"}
+            {file ? `Selected: ${file.name}` : "Supports images and PDF. Processing starts automatically after selection."}
           </span>
           {loading && (
             <span className="status-pill">
@@ -1425,7 +992,7 @@ export default function App() {
             </span>
           )}
         </div>
-        <div className="upload-meta mono">Shortcut: Ctrl/Cmd + U 上传，Ctrl/Cmd + Shift + A 截图 OCR</div>
+        <div className="upload-meta mono">Shortcuts: Ctrl/Cmd + U upload, Ctrl/Cmd + Shift + A capture OCR, Ctrl + M broadcast toggle</div>
       </div>
 
       {error && (

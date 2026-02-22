@@ -4,7 +4,9 @@ const { spawn } = require('child_process');
 
 const isDev = process.env.NODE_ENV !== 'production';
 const FRONTEND_DEV_URL = 'http://localhost:5173';
-const CAPTURE_HOTKEY = 'CommandOrControl+Shift+A';
+const CAPTURE_HOTKEYS = process.platform === 'darwin'
+  ? ['Command+Shift+A', 'Control+Shift+A']
+  : ['Control+Shift+A'];
 
 let mainWindow;
 let backendProcess;
@@ -28,6 +30,7 @@ function createWindow() {
       webSecurity: false,
     },
     titleBarStyle: 'hidden',
+    title: 'Lumina',
     show: false,
     backgroundColor: '#07121a',
   });
@@ -87,17 +90,19 @@ function startBackend() {
 }
 
 function registerGlobalShortcuts() {
-  const registered = globalShortcut.register(CAPTURE_HOTKEY, async () => {
-    await captureAndSendScreen('global-shortcut');
-  });
+  for (const hotkey of CAPTURE_HOTKEYS) {
+    const registered = globalShortcut.register(hotkey, async () => {
+      await captureAndSendScreen('global-shortcut');
+    });
 
-  if (!registered) {
-    console.error(`[shortcut] Failed to register global shortcut: ${CAPTURE_HOTKEY}`);
-    return;
+    if (!registered) {
+      console.error(`[shortcut] Failed to register global shortcut: ${hotkey}`);
+      continue;
+    }
+
+    const isRegistered = globalShortcut.isRegistered(hotkey);
+    console.log(`[shortcut] ${hotkey} registered: ${isRegistered}`);
   }
-
-  const isRegistered = globalShortcut.isRegistered(CAPTURE_HOTKEY);
-  console.log(`[shortcut] ${CAPTURE_HOTKEY} registered: ${isRegistered}`);
 }
 
 async function captureAndSendScreen(trigger = 'unknown') {
@@ -139,6 +144,7 @@ async function captureAndSendScreen(trigger = 'unknown') {
 }
 
 app.whenReady().then(() => {
+  app.setName('Lumina');
   // startBackend(); // Let npm-run-all handle backend for now in development
   createWindow();
   registerGlobalShortcuts();
