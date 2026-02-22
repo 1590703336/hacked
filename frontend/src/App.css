@@ -372,35 +372,6 @@ select,
   line-height: 1.62;
 }
 
-.speed-line {
-  margin-bottom: 8px;
-  color: var(--text-muted);
-  font-size: 0.85rem;
-}
-
-.speed-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.speed-btn {
-  border-radius: 8px;
-  border: 1px solid var(--border-strong);
-  background: #152434;
-  color: #def0ff;
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  font-weight: 700;
-  padding: 5px 10px;
-}
-
-.speed-btn.active {
-  border-color: rgba(67, 226, 207, 0.75);
-  background: rgba(67, 226, 207, 0.16);
-}
-
 .chunk-panel {
   margin-bottom: 12px;
   border-radius: var(--radius-sm);
