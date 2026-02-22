@@ -1233,20 +1233,20 @@ export default function App() {
         onClick={handleInitialInteraction}
         onKeyDown={handleInitialInteraction}
         tabIndex={0}
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          backgroundColor: "#0d1117",
-          color: "#e8f0f8",
-          fontFamily: "sans-serif",
-          cursor: "pointer"
-        }}
+        className="welcome-shell"
       >
-        <div style={{ textAlign: "center", padding: "2rem", border: "2px solid #3c5268", borderRadius: "12px", backgroundColor: "#1b2938" }}>
-          <h1 style={{ marginBottom: "1rem" }}>Welcome to the Accessible OCR App</h1>
-          <p style={{ fontSize: "1.3rem", color: "#8fa4bc" }}>Click anywhere or press any key to start and enable audio.</p>
+        <div className="welcome-card">
+          <span className="welcome-tag mono">Accessibility First</span>
+          <h1 className="welcome-title">Accessible OCR Studio</h1>
+          <p className="welcome-subtitle">
+            点击任意位置或按任意键开始。界面支持高对比度、语音反馈和快捷键操作。
+          </p>
+          <div className="hotkey-grid">
+            <span className="hotkey-chip"><kbd>Ctrl/Cmd + U</kbd>上传文件</span>
+            <span className="hotkey-chip"><kbd>Ctrl/Cmd + Shift + A</kbd>截图 OCR</span>
+            <span className="hotkey-chip"><kbd>Ctrl/Cmd + K</kbd>朗读正文</span>
+            <span className="hotkey-chip"><kbd>Ctrl/Cmd + H</kbd>播报快捷键帮助</span>
+          </div>
         </div>
       </div>
     );
@@ -1254,61 +1254,32 @@ export default function App() {
 
   if (activePage === "whisper-test") {
     return (
-      <div style={{ padding: "2rem", maxWidth: "900px", margin: "0 auto", fontFamily: "sans-serif" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.2rem" }}>
-          <h1>Whisper Test</h1>
-          <button
-            onClick={backToMainPage}
-            style={{
-              padding: "0.5rem 0.9rem",
-              borderRadius: "8px",
-              border: "1px solid #3c5268",
-              color: "#d3dfeb",
-              backgroundColor: "#1b2938",
-              fontWeight: "bold",
-            }}
-          >
-            Back
-          </button>
+      <div className="app-shell">
+        <div className="topbar">
+          <div className="title-wrap">
+            <h1>Whisper Test Lab</h1>
+            <p>录音后直连 Whisper，检查原始转写结果与麦克风质量。</p>
+          </div>
+          <button onClick={backToMainPage} className="btn btn-secondary">Back to OCR</button>
         </div>
 
-        <p style={{ color: "#a8bbcf", marginBottom: "1rem" }}>
-          Record your voice, send to Whisper, and inspect raw transcription text only.
-        </p>
+        <p className="whisper-note">你可以先做麦克风增益检查，再开始录音，结果会写入历史列表。</p>
 
-        <div style={{ display: "flex", gap: "0.7rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+        <div className="button-row">
           {!whisperTestRecording ? (
             <button
               onClick={startWhisperTestRecording}
               disabled={whisperTestTranscribing}
-              style={{
-                padding: "0.6rem 1rem",
-                borderRadius: "8px",
-                border: "none",
-                backgroundColor: "#3ecfcf",
-                color: "#080b0f",
-                fontWeight: "bold",
-                opacity: whisperTestTranscribing ? 0.6 : 1,
-                cursor: whisperTestTranscribing ? "not-allowed" : "pointer",
-              }}
+              className="btn btn-primary"
             >
               Start Recording
             </button>
           ) : (
-            <button
-              onClick={stopWhisperTestRecording}
-              style={{
-                padding: "0.6rem 1rem",
-                borderRadius: "8px",
-                border: "none",
-                backgroundColor: "#ff7c3e",
-                color: "#080b0f",
-                fontWeight: "bold",
-              }}
-            >
+            <button onClick={stopWhisperTestRecording} className="btn btn-danger">
               Stop Recording
             </button>
           )}
+
           <button
             onClick={() => {
               setWhisperTestText("");
@@ -1320,62 +1291,31 @@ export default function App() {
               whisperTestPeakRef.current = 0;
               clearWhisperTestPlayback();
             }}
-            style={{
-              padding: "0.6rem 1rem",
-              borderRadius: "8px",
-              border: "1px solid #3c5268",
-              color: "#d3dfeb",
-              backgroundColor: "#1b2938",
-              fontWeight: "bold",
-            }}
+            className="btn btn-ghost"
           >
             Clear
           </button>
+
           <button
             onClick={toggleWhisperTestPlayback}
             disabled={!whisperTestHasPlayback}
-            style={{
-              padding: "0.6rem 1rem",
-              borderRadius: "8px",
-              border: "1px solid #3c5268",
-              color: "#d3dfeb",
-              backgroundColor: "#1b2938",
-              fontWeight: "bold",
-              opacity: whisperTestHasPlayback ? 1 : 0.45,
-              cursor: whisperTestHasPlayback ? "pointer" : "not-allowed",
-            }}
+            className="btn btn-ghost"
           >
             {whisperTestPlaying ? "Stop Playback" : "Play Local Recording"}
           </button>
-          <button
-            onClick={playSpeakerTestTone}
-            style={{
-              padding: "0.6rem 1rem",
-              borderRadius: "8px",
-              border: "1px solid #3c5268",
-              color: "#d3dfeb",
-              backgroundColor: "#1b2938",
-              fontWeight: "bold",
-            }}
-          >
+
+          <button onClick={playSpeakerTestTone} className="btn btn-ghost">
             Speaker Test Tone
           </button>
         </div>
 
-        <div style={{ marginBottom: "0.9rem" }}>
-          <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.45rem" }}>Microphone Device</div>
+        <div style={{ marginBottom: "10px" }}>
+          <div className="info-line">Microphone Device</div>
           <select
             value={selectedAudioInputId}
             onChange={(e) => setSelectedAudioInputId(e.target.value)}
             disabled={whisperTestRecording}
-            style={{
-              width: "100%",
-              padding: "0.55rem 0.65rem",
-              borderRadius: "8px",
-              border: "1px solid #3c5268",
-              backgroundColor: "#14202d",
-              color: "#d3dfeb",
-            }}
+            className="select-control"
           >
             {audioInputs.length === 0 && (
               <option value="">No microphone found</option>
@@ -1388,60 +1328,49 @@ export default function App() {
           </select>
         </div>
 
-        <div style={{ marginBottom: "0.9rem" }}>
-          <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.35rem" }}>
-            Mic Input Level (live while recording): current {micLevel.toFixed(3)} · peak {micPeak.toFixed(3)}
-          </div>
-          <div style={{ height: "10px", borderRadius: "999px", backgroundColor: "#172334", overflow: "hidden", border: "1px solid #2d3d52" }}>
-            <div
-              style={{
-                width: `${Math.max(2, Math.round(micLevel * 100))}%`,
-                height: "100%",
-                background: "linear-gradient(90deg, #3ef07a, #fcba03, #ff7c3e)",
-                transition: "width 120ms linear",
-              }}
-            />
-          </div>
+        <div className="info-line">
+          Mic Input Level: current {micLevel.toFixed(3)} · peak {micPeak.toFixed(3)}
+        </div>
+        <div className="level-track">
+          <div className="level-fill" style={{ width: `${Math.max(2, Math.round(micLevel * 100))}%` }} />
         </div>
 
         {(whisperTestRecording || whisperTestTranscribing) && (
-          <div style={{ color: "#9fb1c5", marginBottom: "1rem" }}>
+          <div className="info-line">
             {whisperTestRecording ? "Recording..." : "Transcribing via Whisper..."}
           </div>
         )}
 
         {whisperTestMeta && (
-          <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.8rem" }}>
+          <div className="info-line small">
             Last audio: {whisperTestMeta.bytes} bytes · {Math.round(whisperTestMeta.durationMs)} ms · {whisperTestMeta.mimeType} · peak {whisperTestMeta.peak?.toFixed(3)} · {whisperTestMeta.inputDevice}
           </div>
         )}
 
         {whisperTestError && (
-          <div style={{ color: "#ffd0c0", backgroundColor: "#3c1c0f", padding: "0.8rem", borderRadius: "8px", marginBottom: "1rem" }}>
-            {whisperTestError}
-          </div>
+          <div className="alert alert-error">{whisperTestError}</div>
         )}
 
-        <div style={{ backgroundColor: "#121b26", border: "1px solid #263545", borderRadius: "10px", padding: "1rem", marginBottom: "1rem" }}>
-          <div style={{ color: "#8fa4bc", fontSize: "0.85rem", marginBottom: "0.5rem" }}>Latest Transcription</div>
-          <div style={{ color: "#e8f0f8", fontSize: "1rem", minHeight: "2rem", whiteSpace: "pre-wrap" }}>
+        <div className="panel" style={{ padding: "12px", marginBottom: "12px" }}>
+          <div className="info-line">Latest Transcription</div>
+          <div className="text-block" style={{ marginBottom: 0 }}>
             {whisperTestText || "(no transcription yet)"}
           </div>
         </div>
 
-        <div style={{ backgroundColor: "#0f1620", border: "1px solid #2b3a4d", borderRadius: "10px", padding: "1rem" }}>
-          <div style={{ color: "#8fa4bc", fontSize: "0.85rem", marginBottom: "0.6rem" }}>History</div>
-          <div style={{ maxHeight: "320px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+        <div className="panel" style={{ padding: "12px" }}>
+          <div className="info-line">History</div>
+          <div className="history-list">
             {whisperTestHistory.length === 0 && (
-              <div style={{ color: "#8fa4bc" }}>No records yet.</div>
+              <div className="tutor-empty">No records yet.</div>
             )}
             {whisperTestHistory.map((item, idx) => (
-              <div key={`${item.timestamp}-${idx}`} style={{ backgroundColor: "#182433", border: "1px solid #2b3a4d", borderRadius: "8px", padding: "0.7rem" }}>
-                <div style={{ color: "#7f97b0", fontSize: "0.72rem", marginBottom: "0.2rem" }}>
+              <div key={`${item.timestamp}-${idx}`} className="history-item">
+                <div className="history-meta">
                   {new Date(item.timestamp).toLocaleString()} · {item.bytes} bytes · {Math.round(item.durationMs || 0)} ms · {item.mimeType || "unknown"} · peak {(item.peak || 0).toFixed(3)}
                 </div>
-                <div style={{ color: "#7f97b0", fontSize: "0.72rem", marginBottom: "0.2rem" }}>{item.inputDevice || "(unknown input)"}</div>
-                <div style={{ color: "#e8f0f8", whiteSpace: "pre-wrap" }}>{item.text}</div>
+                <div className="history-meta">{item.inputDevice || "(unknown input)"}</div>
+                <div className="text-block" style={{ marginBottom: 0, padding: "8px" }}>{item.text}</div>
               </div>
             ))}
           </div>
@@ -1451,8 +1380,8 @@ export default function App() {
   }
 
   return (
-    <div style={{ padding: "2rem", maxWidth: "800px", margin: "0 auto", fontFamily: "sans-serif", minHeight: "100vh" }}>
-      <div aria-live="polite" aria-atomic="true" style={{ position: "absolute", width: "1px", height: "1px", padding: 0, margin: "-1px", overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}>
+    <div className="app-shell">
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
         {loading ? "Processing document. Please wait." : ""}
         {summarizing ? "Generating summary." : ""}
         {isRecording ? "Listening to your question." : ""}
@@ -1462,215 +1391,125 @@ export default function App() {
         {ttsError ? "Audio Error: " + ttsError : ""}
         {tutorError ? "Tutor Error: " + tutorError : ""}
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
-        <h1>Simple Upload & OCR</h1>
-        <button
-          onClick={openWhisperTestPage}
-          style={{
-            padding: "0.5rem 0.9rem",
-            borderRadius: "8px",
-            border: "1px solid #3c5268",
-            color: "#d3dfeb",
-            backgroundColor: "#1b2938",
-            fontWeight: "bold",
-          }}
-        >
-          Whisper Test Page
-        </button>
+
+      <div className="topbar">
+        <div className="title-wrap">
+          <h1>Accessible OCR Studio</h1>
+          <p>高对比度阅读、OCR、摘要、朗读和语音问答一体化工作台。</p>
+        </div>
+        <button onClick={openWhisperTestPage} className="btn btn-secondary">Whisper Test Page</button>
       </div>
-      <div style={{ marginBottom: "1.5rem", display: "flex", alignItems: "center", gap: "1rem" }}>
-        <input
-          type="file"
-          ref={fileInputRef}
-          onChange={(e) => {
-            const selectedFile = e.target.files[0];
-            if (selectedFile) {
-              setFile(selectedFile);
-              // Since state updates are async, we can't just call handleUpload() directly here reliably
-              // without it using the *old* state of `file`. The effect hook handles it.
-            }
-          }}
-          style={{ color: "var(--text, black)" }}
-        />
-        {/* The upload button is hidden because the process is now automatic, 
-            but kept in the DOM if needed for fallback accessibility later */}
-        {loading && (
-          <div style={{ color: "#3ecfcf", fontWeight: "bold" }}>
-            Processing document automatically...
-          </div>
-        )}
+
+      <div className="panel upload-panel">
+        <div className="upload-row">
+          <input
+            type="file"
+            ref={fileInputRef}
+            className="hidden-file-input"
+            onChange={(e) => {
+              const selectedFile = e.target.files[0];
+              if (selectedFile) {
+                setFile(selectedFile);
+              }
+            }}
+          />
+          <button onClick={() => fileInputRef.current?.click()} className="btn btn-primary">
+            Choose File
+          </button>
+          <span className="info-line small" style={{ margin: 0 }}>
+            {file ? `Selected: ${file.name}` : "支持图片与 PDF；选择后自动处理"}
+          </span>
+          {loading && (
+            <span className="status-pill">
+              <span className="status-dot" /> Processing document...
+            </span>
+          )}
+        </div>
+        <div className="upload-meta mono">Shortcut: Ctrl/Cmd + U 上传，Ctrl/Cmd + Shift + A 截图 OCR</div>
       </div>
 
       {error && (
-        <div style={{ color: "#d32f2f", backgroundColor: "#ffebee", padding: "1rem", borderRadius: "8px", marginBottom: "1rem" }}>
+        <div className="alert alert-error">
           <strong>Error: </strong> {error}
         </div>
       )}
 
       {resultText && (
-        <div>
-          <h2>Document Processed</h2>
+        <div className="panel" style={{ padding: "14px" }}>
+          <div className="section-title">
+            <h2>Document Processed</h2>
+          </div>
 
           {processedImages && processedImages.length > 0 && (
-            <div style={{ marginBottom: "1.5rem" }}>
-              <h3 style={{ marginBottom: "0.5rem" }}>Images (Screenshots/Uploads)</h3>
-              <div style={{ display: "flex", gap: "1rem", overflowX: "auto", paddingBottom: "0.5rem" }}>
+            <div style={{ marginBottom: "14px" }}>
+              <div className="section-title">
+                <h3>Images (Screenshots / Uploads)</h3>
+              </div>
+              <div className="image-strip">
                 {processedImages.map((base64Img, idx) => (
                   <img
                     key={idx}
                     src={`data:image/png;base64,${base64Img}`}
                     alt={`Processed document page ${idx + 1}`}
-                    style={{
-                      maxHeight: "300px",
-                      borderRadius: "8px",
-                      border: "1px solid #3c5268",
-                      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                    }}
+                    className="image-thumb"
                   />
                 ))}
               </div>
             </div>
           )}
 
-          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
-            <button
-              onClick={() => setShowOcrText(!showOcrText)}
-              style={{
-                padding: "0.5rem 1rem",
-                cursor: "pointer",
-                backgroundColor: "#2a3b4c",
-                color: "#e8f0f8",
-                border: "1px solid #3c5268",
-                borderRadius: "8px",
-                fontWeight: "bold",
-              }}
-            >
+          <div className="button-row">
+            <button onClick={() => setShowOcrText(!showOcrText)} className="btn btn-ghost">
               {showOcrText ? "Hide Transcription" : "Show Transcription"}
             </button>
           </div>
 
-          {showOcrText && (
-            <pre style={{
-              whiteSpace: "pre-wrap",
-              backgroundColor: "#1e2836",
-              color: "#e8f0f8",
-              padding: "1.5rem",
-              borderRadius: "8px",
-              border: "1px solid #263545",
-              marginTop: "1rem",
-              marginBottom: "1rem"
-            }}>
-              {resultText}
-            </pre>
-          )}
+          {showOcrText && <pre className="text-block">{resultText}</pre>}
 
-          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "1rem" }}>
-            <button
-              onClick={handleSummarize}
-              disabled={summarizing}
-              style={{
-                padding: "0.5rem 1rem",
-                cursor: summarizing ? "not-allowed" : "pointer",
-                backgroundColor: "#fcba03",
-                color: "#080b0f",
-                border: "none",
-                borderRadius: "8px",
-                fontWeight: "bold",
-              }}
-            >
+          <div className="button-row">
+            <button onClick={handleSummarize} disabled={summarizing} className="btn btn-warning">
               {summarizing ? "Summarizing..." : "Summarize"}
             </button>
 
             {!isReading || readingTarget !== "ocr" ? (
-              <button
-                onClick={() => startReading(resultText, "ocr")}
-                style={{
-                  padding: "0.5rem 1rem",
-                  cursor: "pointer",
-                  backgroundColor: "#3ef07a",
-                  color: "#080b0f",
-                  border: "none",
-                  borderRadius: "8px",
-                  fontWeight: "bold",
-                }}
-              >
+              <button onClick={() => startReading(resultText, "ocr")} className="btn btn-success">
                 {isReading ? "Switch To OCR Read" : "Read OCR Aloud"}
               </button>
             ) : (
               <>
-                <button
-                  onClick={togglePauseReading}
-                  style={{
-                    padding: "0.5rem 1rem",
-                    cursor: "pointer",
-                    backgroundColor: isPaused ? "#3ef07a" : "#ff7c3e",
-                    color: "#080b0f",
-                    border: "none",
-                    borderRadius: "8px",
-                    fontWeight: "bold",
-                  }}
-                >
+                <button onClick={togglePauseReading} className={`btn ${isPaused ? "btn-success" : "btn-danger"}`}>
                   {isPaused ? "Resume OCR (Space)" : "Pause OCR (Space)"}
                 </button>
-                <button
-                  onClick={stopReading}
-                  style={{
-                    padding: "0.5rem 1rem",
-                    cursor: "pointer",
-                    backgroundColor: "#9ba7b4",
-                    color: "#080b0f",
-                    border: "none",
-                    borderRadius: "8px",
-                    fontWeight: "bold",
-                  }}
-                >
+                <button onClick={stopReading} className="btn btn-ghost">
                   Stop OCR
                 </button>
               </>
             )}
           </div>
 
-          <div style={{ marginBottom: "1rem" }}>
-            <div style={{ color: "#8fa4bc", fontSize: "0.82rem", marginBottom: "0.35rem" }}>
-              TTS Speed: {ttsSpeed.toFixed(2)}x
-            </div>
-            <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
-              {TTS_SPEED_OPTIONS.map((speedOption) => {
-                const active = Math.abs(ttsSpeed - speedOption) < 0.001;
-                return (
-                  <button
-                    key={speedOption}
-                    onClick={() => setTtsSpeed(speedOption)}
-                    style={{
-                      padding: "0.35rem 0.6rem",
-                      borderRadius: "7px",
-                      border: `1px solid ${active ? "#3ecfcf" : "#3c5268"}`,
-                      backgroundColor: active ? "rgba(62,207,207,0.14)" : "#1b2938",
-                      color: active ? "#e8f0f8" : "#d3dfeb",
-                      fontWeight: "bold",
-                      fontSize: "0.78rem",
-                    }}
-                  >
-                    {speedOption}x
-                  </button>
-                );
-              })}
-            </div>
+          <div className="speed-line">TTS Speed: {ttsSpeed.toFixed(2)}x</div>
+          <div className="speed-grid">
+            {TTS_SPEED_OPTIONS.map((speedOption) => {
+              const active = Math.abs(ttsSpeed - speedOption) < 0.001;
+              return (
+                <button
+                  key={speedOption}
+                  onClick={() => setTtsSpeed(speedOption)}
+                  className={`speed-btn ${active ? "active" : ""}`}
+                >
+                  {speedOption}x
+                </button>
+              );
+            })}
           </div>
 
           {(isReading || ttsChunkCount > 0 || ttsChunks.length > 0) && (
-            <div style={{
-              backgroundColor: "#151d26",
-              border: "1px solid #263545",
-              borderRadius: "8px",
-              padding: "1rem",
-              marginBottom: "1rem"
-            }}>
-              <div style={{ marginBottom: "0.75rem", color: "#8fa4bc", fontSize: "0.9rem" }}>
+            <div className="chunk-panel">
+              <div className="chunk-head">
                 {ttsSourceLabel ? `${ttsSourceLabel} Read-Aloud Chunks` : "Read-Aloud Chunks"} ({ttsChunkCount || ttsChunks.length})
                 {isReading && isPaused ? " - Paused" : ""}
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", maxHeight: "280px", overflowY: "auto" }}>
+              <div className="chunk-list">
                 {Array.from({ length: ttsChunkCount || ttsChunks.length }).map((_, idx) => {
                   const chunkText = ttsChunks[idx] || `Chunk ${idx + 1} generating...`;
                   const isActive = currentChunkIndex === idx;
@@ -1678,15 +1517,7 @@ export default function App() {
                   return (
                     <div
                       key={idx}
-                      style={{
-                        padding: "0.6rem 0.75rem",
-                        borderRadius: "8px",
-                        border: `1px solid ${isActive ? "#3ecfcf" : "#263545"}`,
-                        backgroundColor: isActive ? "rgba(62, 207, 207, 0.14)" : (isRead ? "#0e141b" : "#111923"),
-                        color: isActive ? "#e8f0f8" : "#b8c6d5",
-                        fontSize: "0.86rem",
-                        lineHeight: 1.5
-                      }}
+                      className={`chunk-item ${isActive ? "active" : ""} ${isRead ? "read" : ""}`}
                     >
                       {chunkText}
                     </div>
@@ -1697,82 +1528,41 @@ export default function App() {
           )}
 
           {ttsError && (
-            <div style={{ color: "#ffd0c0", backgroundColor: "#3c1c0f", padding: "0.75rem", borderRadius: "8px", marginBottom: "1rem" }}>
+            <div className="alert alert-error">
               <strong>TTS: </strong>{ttsError}
             </div>
           )}
 
           {summaryText && (
             <div>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem", flexWrap: "wrap" }}>
+              <div className="section-title">
                 <h3>Summary</h3>
-                {!isReading || readingTarget !== "summary" ? (
-                  <button
-                    onClick={() => startReading(getSummaryReadableText(), "summary")}
-                    style={{
-                      padding: "0.35rem 0.75rem",
-                      cursor: "pointer",
-                      backgroundColor: "#3e9fff",
-                      color: "#080b0f",
-                      border: "none",
-                      borderRadius: "8px",
-                      fontWeight: "bold",
-                      fontSize: "0.8rem",
-                    }}
-                  >
-                    Read Summary Aloud
-                  </button>
-                ) : (
-                  <button
-                    onClick={togglePauseReading}
-                    style={{
-                      padding: "0.35rem 0.75rem",
-                      cursor: "pointer",
-                      backgroundColor: isPaused ? "#3ef07a" : "#ff7c3e",
-                      color: "#080b0f",
-                      border: "none",
-                      borderRadius: "8px",
-                      fontWeight: "bold",
-                      fontSize: "0.8rem",
-                    }}
-                  >
-                    {isPaused ? "Resume Summary (Space)" : "Pause Summary (Space)"}
-                  </button>
-                )}
-                {isReading && readingTarget === "summary" && (
-                  <button
-                    onClick={stopReading}
-                    style={{
-                      padding: "0.35rem 0.75rem",
-                      cursor: "pointer",
-                      backgroundColor: "#ff7c3e",
-                      color: "#080b0f",
-                      border: "none",
-                      borderRadius: "8px",
-                      fontWeight: "bold",
-                      fontSize: "0.8rem",
-                    }}
-                  >
-                    Stop Summary
-                  </button>
-                )}
+                <div className="button-row" style={{ marginBottom: 0 }}>
+                  {!isReading || readingTarget !== "summary" ? (
+                    <button onClick={() => startReading(getSummaryReadableText(), "summary")} className="btn btn-info btn-xs">
+                      Read Summary Aloud
+                    </button>
+                  ) : (
+                    <button onClick={togglePauseReading} className={`btn btn-xs ${isPaused ? "btn-success" : "btn-danger"}`}>
+                      {isPaused ? "Resume Summary (Space)" : "Pause Summary (Space)"}
+                    </button>
+                  )}
+                  {isReading && readingTarget === "summary" && (
+                    <button onClick={stopReading} className="btn btn-xs btn-ghost">
+                      Stop Summary
+                    </button>
+                  )}
+                </div>
               </div>
-              <div style={{
-                backgroundColor: "#2a3b4c",
-                color: "#e8f0f8",
-                padding: "1.5rem",
-                borderRadius: "8px",
-                border: "1px solid #3c5268",
-                marginTop: "0.5rem"
-              }}>
-                {summaryText.takeaways ? (
-                  <ul style={{ margin: 0, paddingLeft: "1.5rem" }}>
+              <div className="summary-box">
+                {Array.isArray(summaryText?.takeaways) ? (
+                  <ul className="summary-list">
                     {summaryText.takeaways.map((point, i) => (
-                      <li key={i} style={{ marginBottom: "0.5rem", lineHeight: "1.5" }}>{point}</li>
+                      <li key={i}>{point}</li>
                     ))}
                   </ul>
                 ) : (
-                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                  <pre className="text-block" style={{ marginBottom: 0 }}>
                     {JSON.stringify(summaryText, null, 2)}
                   </pre>
                 )}
@@ -1783,84 +1573,36 @@ export default function App() {
       )}
 
       {(resultText || summaryText) && (
-        <div
-          style={{
-            position: "fixed",
-            right: "20px",
-            bottom: "20px",
-            width: "360px",
-            maxWidth: "calc(100vw - 40px)",
-            backgroundColor: "#0f1620",
-            border: "1px solid #2b3a4d",
-            borderRadius: "12px",
-            padding: "12px",
-            boxShadow: "0 16px 40px rgba(0,0,0,0.35)",
-            zIndex: 40,
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-            <strong style={{ color: "#e8f0f8", fontSize: "0.95rem" }}>Tutor Q&A</strong>
-            <span style={{ color: "#8fa4bc", fontSize: "0.75rem" }}>Multi-turn</span>
+        <div className="floating-tutor">
+          <div className="tutor-head">
+            <strong>Tutor Q&A</strong>
+            <span>Multi-turn</span>
           </div>
 
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
+          <div className="button-row" style={{ marginBottom: "8px" }}>
             {!isRecording ? (
               <button
                 onClick={startRecordingQuestion}
                 disabled={isTranscribing || isTutorThinking}
-                style={{
-                  padding: "0.4rem 0.7rem",
-                  borderRadius: "8px",
-                  border: "none",
-                  backgroundColor: "#3ecfcf",
-                  color: "#080b0f",
-                  fontWeight: "bold",
-                  fontSize: "0.78rem",
-                  cursor: isTranscribing || isTutorThinking ? "not-allowed" : "pointer",
-                  opacity: isTranscribing || isTutorThinking ? 0.6 : 1,
-                }}
+                className="btn btn-primary btn-xs"
               >
                 Start Voice Question
               </button>
             ) : (
-              <button
-                onClick={stopRecordingQuestion}
-                style={{
-                  padding: "0.4rem 0.7rem",
-                  borderRadius: "8px",
-                  border: "none",
-                  backgroundColor: "#ff7c3e",
-                  color: "#080b0f",
-                  fontWeight: "bold",
-                  fontSize: "0.78rem",
-                  cursor: "pointer",
-                }}
-              >
+              <button onClick={stopRecordingQuestion} className="btn btn-danger btn-xs">
                 Stop Recording
               </button>
             )}
 
             {isReading && (
-              <button
-                onClick={togglePauseReading}
-                style={{
-                  padding: "0.4rem 0.7rem",
-                  borderRadius: "8px",
-                  border: "1px solid #3b4a5d",
-                  backgroundColor: "#162130",
-                  color: "#d3dfeb",
-                  fontWeight: "bold",
-                  fontSize: "0.78rem",
-                  cursor: "pointer",
-                }}
-              >
+              <button onClick={togglePauseReading} className="btn btn-ghost btn-xs">
                 {isPaused ? "Continue Reading" : "Pause Reading"}
               </button>
             )}
           </div>
 
           {(isRecording || isTranscribing || isTutorThinking) && (
-            <div style={{ color: "#9fb1c5", fontSize: "0.76rem", marginBottom: "8px" }}>
+            <div className="tutor-status">
               {isRecording
                 ? "Recording... click Stop Recording when done."
                 : isTranscribing
@@ -1869,52 +1611,23 @@ export default function App() {
             </div>
           )}
 
-          {tutorError && (
-            <div style={{ color: "#ffd0c0", backgroundColor: "#3c1c0f", padding: "0.5rem", borderRadius: "8px", marginBottom: "8px", fontSize: "0.78rem" }}>
-              {tutorError}
-            </div>
-          )}
+          {tutorError && <div className="alert alert-error">{tutorError}</div>}
 
-          <div
-            style={{
-              maxHeight: "220px",
-              overflowY: "auto",
-              display: "flex",
-              flexDirection: "column",
-              gap: "6px",
-              paddingTop: "2px",
-            }}
-          >
+          <div className="tutor-history">
             {tutorMessages.length === 0 && (
-              <div style={{ color: "#8fa4bc", fontSize: "0.78rem" }}>
+              <div className="tutor-empty">
                 Ask by voice about what was just read. Space pauses/resumes reading.
               </div>
             )}
             {tutorMessages.map((msg, idx) => (
-              <div
-                key={`${msg.role}-${idx}`}
-                style={{
-                  alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-                  backgroundColor: msg.role === "user" ? "#1f374d" : "#1a2634",
-                  color: "#e8f0f8",
-                  border: "1px solid #2b3a4d",
-                  borderRadius: "8px",
-                  padding: "0.5rem 0.6rem",
-                  fontSize: "0.8rem",
-                  lineHeight: 1.45,
-                  maxWidth: "95%",
-                }}
-              >
-                <div style={{ opacity: 0.75, fontSize: "0.68rem", marginBottom: "2px" }}>
-                  {msg.role === "user" ? "You" : "Tutor"}
-                </div>
+              <div key={`${msg.role}-${idx}`} className={`tutor-bubble ${msg.role === "user" ? "user" : ""}`}>
+                <div className="tutor-role">{msg.role === "user" ? "You" : "Tutor"}</div>
                 {msg.text}
               </div>
             ))}
           </div>
         </div>
-      )
-      }
-    </div >
+      )}
+    </div>
   );
 }
